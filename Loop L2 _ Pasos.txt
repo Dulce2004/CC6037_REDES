@@ -1,0 +1,30 @@
+1. Abrir Cisco Packet Tracer.
+2. Agregar dos switches Cisco 2960.
+3. Conectar los switches mediante dos enlaces:
+   - Fa0/1 <-> Fa0/1
+   - Fa0/2 <-> Fa0/2
+4. Deshabilitar STP en ambos switches (Comandos_Deshabilitar_STP.png):
+   enable
+   configure terminal
+   no spanning-tree vlan 1
+   end
+   write
+5. Agregar dos PCs y conectarlas a los switches (Escenarion_sin_loop.png).
+6. Configurar las direcciones IP (PCO_IP.png y PC1_IP.png):
+   PC0: 192.168.1.10/24
+   PC1: 192.168.1.20/24
+7. Cambiar a Simulation Mode (loop_ModeSimulation.png).
+8. Ejecutar un ping entre las PCs para observar el loop.
+
+Pasos para romper el loop (Escenario_loop.png):
+
+Opción 1:
+- Eliminar uno de los dos enlaces entre los switches (Quitar_Cable_Roper_Loop.png).
+
+Opción 2:
+- Habilitar nuevamente STP en ambos switches (Habilitar_STP(romper loop).png):
+  enable
+  configure terminal
+  spanning-tree vlan 1
+  end
+  write
