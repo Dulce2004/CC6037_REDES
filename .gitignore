@@ -1,0 +1,43 @@
+# Bytecode y cachés de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Herramientas de pruebas, cobertura y análisis
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Empaquetado
+build/
+dist/
+*.egg-info/
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Archivos temporales y registros
+*.log
+*.tmp
+*.swp
+*~
+
+# Variables de entorno y secretos locales
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
