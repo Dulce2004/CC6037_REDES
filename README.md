@@ -22,8 +22,7 @@ En iteraciones posteriores se incorporarán, de acuerdo con la especificación d
 
 - un servidor MCP implementado manualmente;
 - un cliente MCP para terminal;
-- comunicación y manejo de mensajes JSON-RPC;
-- validación de solicitudes, respuestas y errores del protocolo;
+- uso de la capa manual JSON-RPC para comunicar los componentes;
 - lógica de clasificación del caso de uso de farmacia;
 - pruebas unitarias y de integración.
 
@@ -33,7 +32,7 @@ No se utilizarán FastMCP ni SDKs o bibliotecas que implementen MCP. La intenci�
 
 - Python 3;
 - biblioteca estándar de Python;
-- JSON como formato de intercambio futuro;
+- JSON como formato de intercambio de la capa JSON-RPC;
 - terminal o línea de comandos;
 - Git para control de versiones.
 
@@ -46,7 +45,7 @@ En esta etapa no se requieren dependencias externas.
 ├── src/
 │   └── pharmacy_mcp/
 │       ├── client/       # Futuro cliente de terminal
-│       ├── jsonrpc/      # Futuro manejo manual de JSON-RPC
+│       ├── jsonrpc/      # Mensajes y manejo manual de JSON-RPC
 │       ├── pharmacy/     # Futura lógica del caso de uso
 │       └── server/       # Futuro servidor MCP manual
 ├── tests/                # Futuras pruebas automatizadas
@@ -55,13 +54,30 @@ En esta etapa no se requieren dependencias externas.
 └── requirements.txt
 ```
 
-## Comunicación MCP y JSON-RPC
+## JSON-RPC Layer
 
-La comunicación entre cliente y servidor se desarrollará posteriormente mediante JSON-RPC. El servidor MCP será una implementación manual: no se delegará el protocolo a FastMCP, a un SDK de MCP ni a otra biblioteca equivalente.
+JSON-RPC 2.0 será el mecanismo de intercambio de mensajes que utilizará posteriormente el protocolo entre cliente y servidor. Esta capa fue implementada manualmente con el módulo `json` de la biblioteca estándar; no utiliza FastMCP, SDKs de MCP ni bibliotecas externas de JSON-RPC.
+
+Actualmente soporta:
+
+- solicitudes (`Request`), incluyendo solicitudes sin `id` para representar notificaciones;
+- respuestas exitosas (`Response`);
+- respuestas de error (`ErrorResponse`) y su contenido (`ErrorObject`);
+- validación básica de versión, método, parámetros, identificadores y respuestas;
+- serialización de objetos a JSON y deserialización de JSON a objetos;
+- excepciones asociadas con los códigos estándar `-32700`, `-32600`, `-32601`, `-32602` y `-32603`.
+
+Las pruebas se ejecutan desde la raíz del repositorio:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Esta capa todavía no contiene transporte, sockets, HTTP, despacho de métodos ni comportamiento específico de MCP.
 
 ## Project Status
 
-**Etapa inicial de desarrollo.** El repositorio contiene únicamente la estructura, separación de responsabilidades y documentación base. Todavía no incluye servidor, cliente, comunicación JSON-RPC, conexión con un LLM ni clasificación de síntomas.
+**Segunda etapa de desarrollo.** El repositorio ya contiene una capa manual y probada de mensajes JSON-RPC 2.0. Todavía no incluye servidor MCP, cliente MCP, transporte, conexión con un LLM ni clasificación de síntomas.
 
 ## Preparación del entorno
 
