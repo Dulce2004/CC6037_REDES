@@ -73,12 +73,13 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertIsInstance(response, Response)
         self.assertIsInstance(response.result["tools"], list)
 
-    def test_tools_list_is_initially_empty(self) -> None:
+    def test_tools_list_includes_default_pharmacy_tool(self) -> None:
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=2)
         )
 
-        self.assertEqual(response.result, {"tools": []})
+        tool_names = [tool["name"] for tool in response.result["tools"]]
+        self.assertIn("classify_symptoms", tool_names)
 
     def test_unknown_tool_returns_invalid_params_error(self) -> None:
         response = self.server.process_request(
@@ -108,7 +109,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
             Request(method="tools/list", params={}, id=5)
         )
 
-        self.assertEqual(len(response.result["tools"]), 1)
+        tool_names = [tool["name"] for tool in response.result["tools"]]
+        self.assertIn("echo", tool_names)
 
     def test_tools_list_shows_registered_tool(self) -> None:
         self.register_echo()
@@ -116,7 +118,9 @@ class PharmacyMCPServerTests(unittest.TestCase):
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=6)
         )
-        definition = response.result["tools"][0]
+        definition = next(
+            tool for tool in response.result["tools"] if tool["name"] == "echo"
+        )
 
         self.assertEqual(definition["name"], "echo")
         self.assertEqual(definition["description"], "Returns the provided text.")

@@ -19,6 +19,12 @@ from pharmacy_mcp.jsonrpc import (
 from pharmacy_mcp.jsonrpc.messages import JsonRpcId, JsonValue
 
 from .handlers import Tool, ToolHandler
+from .pharmacy_tool import (
+    CLASSIFY_SYMPTOMS_DESCRIPTION,
+    CLASSIFY_SYMPTOMS_INPUT_SCHEMA,
+    CLASSIFY_SYMPTOMS_NAME,
+    classify_symptoms_handler,
+)
 
 SUPPORTED_PROTOCOL_VERSION = "2025-11-25"
 SERVER_NAME = "Pharmacy MCP Server"
@@ -47,6 +53,12 @@ class PharmacyMCPServer:
             "tools/list": self._handle_tools_list,
             "tools/call": self._handle_tools_call,
         }
+        self.register_tool(
+            name=CLASSIFY_SYMPTOMS_NAME,
+            description=CLASSIFY_SYMPTOMS_DESCRIPTION,
+            input_schema=CLASSIFY_SYMPTOMS_INPUT_SCHEMA,
+            handler=classify_symptoms_handler,
+        )
 
     def register_tool(
         self,
