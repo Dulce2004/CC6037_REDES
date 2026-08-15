@@ -20,7 +20,6 @@ El dominio del proyecto será un sistema de farmacia basado en síntomas. En eta
 
 En iteraciones posteriores se incorporarán, de acuerdo con la especificación del proyecto:
 
-- un servidor MCP implementado manualmente;
 - un cliente MCP para terminal;
 - uso de la capa manual JSON-RPC para comunicar los componentes;
 - lógica de clasificación del caso de uso de farmacia;
@@ -47,7 +46,7 @@ En esta etapa no se requieren dependencias externas.
 │       ├── client/       # Futuro cliente de terminal
 │       ├── jsonrpc/      # Mensajes y manejo manual de JSON-RPC
 │       ├── pharmacy/     # Futura lógica del caso de uso
-│       └── server/       # Futuro servidor MCP manual
+│       └── server/       # Núcleo local del servidor MCP manual
 ├── tests/                # Futuras pruebas automatizadas
 ├── .gitignore
 ├── README.md
@@ -73,11 +72,31 @@ Las pruebas se ejecutan desde la raíz del repositorio:
 python -m unittest discover -s tests -v
 ```
 
-Esta capa todavía no contiene transporte, sockets, HTTP, despacho de métodos ni comportamiento específico de MCP.
+Esta capa no contiene transporte, sockets ni HTTP. El núcleo del servidor descrito a continuación la utiliza directamente para procesar solicitudes locales.
+
+## MCP Server Core
+
+`PharmacyMCPServer` es el núcleo local de un servidor MCP educativo implementado manualmente. Recibe objetos `Request` de nuestra capa JSON-RPC, despacha el método solicitado y devuelve un objeto `Response` o `ErrorResponse`. No utiliza FastMCP, SDKs de MCP ni transporte de red.
+
+Este incremento implementa el subconjunto basado en el protocolo MCP `2025-11-25` solicitado para el proyecto y reconoce tres métodos:
+
+- `initialize`: devuelve la versión de protocolo, las capacidades de herramientas y la información básica del servidor;
+- `tools/list`: devuelve las definiciones públicas de las herramientas registradas; inicialmente la lista está vacía;
+- `tools/call`: busca una herramienta por nombre y ejecuta su handler con un objeto de argumentos.
+
+Una herramienta se registra con `register_tool(name, description, input_schema, handler)`. La definición que muestra `tools/list` contiene `name`, `description` e `inputSchema`; el handler permanece como una función Python interna. Todavía no se registra ninguna herramienta de farmacia. La herramienta `echo` utilizada en las pruebas es únicamente una demostración técnica.
+
+El servidor convierte métodos desconocidos, parámetros inválidos, herramientas inexistentes y fallos internos en respuestas de error JSON-RPC con los códigos estándar ya definidos. En esta etapa no implementa negociación completa del ciclo de vida, validación completa de JSON Schema, notificaciones ni transporte.
+
+Todas las pruebas se ejecutan desde la raíz del repositorio:
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## Project Status
 
-**Segunda etapa de desarrollo.** El repositorio ya contiene una capa manual y probada de mensajes JSON-RPC 2.0. Todavía no incluye servidor MCP, cliente MCP, transporte, conexión con un LLM ni clasificación de síntomas.
+**Tercera etapa de desarrollo.** El repositorio contiene una capa manual de JSON-RPC 2.0 y el núcleo local y probado del servidor MCP. Todavía no incluye cliente MCP, transporte, conexión con un LLM ni clasificación de síntomas.
 
 ## Preparación del entorno
 

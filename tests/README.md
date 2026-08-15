@@ -8,4 +8,4 @@ Desde la raíz del proyecto se ejecutan con:
 python -m unittest discover -s tests -v
 ```
 
-En esta etapa las pruebas cubren únicamente mensajes, validación, serialización y deserialización JSON-RPC. No prueban servidor, cliente, transporte, MCP ni lógica de farmacia porque esos componentes aún no existen.
+Las pruebas cubren la capa JSON-RPC y el núcleo local del servidor MCP: despacho de métodos, registro, listado y ejecución de herramientas ficticias. No prueban transporte, cliente ni lógica de farmacia porque esos componentes aún no existen.
