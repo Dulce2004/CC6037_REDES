@@ -20,8 +20,7 @@ El dominio del proyecto es un sistema de farmacia basado en síntomas. La lógic
 
 En iteraciones posteriores se incorporarán, de acuerdo con la especificación del proyecto:
 
-- un cliente MCP para terminal;
-- transporte local entre el futuro cliente y el servidor.
+- un transporte real entre cliente y servidor en una etapa posterior.
 
 No se utilizarán FastMCP ni SDKs o bibliotecas que implementen MCP. La intención académica es construir y comprender el protocolo directamente.
 
@@ -41,7 +40,7 @@ En esta etapa no se requieren dependencias externas.
 .
 ├── src/
 │   └── pharmacy_mcp/
-│       ├── client/       # Futuro cliente de terminal
+│       ├── client/       # Cliente local e interfaz de terminal
 │       ├── jsonrpc/      # Mensajes y manejo manual de JSON-RPC
 │       ├── pharmacy/     # Catálogo y clasificación educativa
 │       └── server/       # Núcleo local del servidor MCP manual
@@ -118,9 +117,43 @@ La herramienta puede probarse localmente creando un `Request` con método `tools
 
 > **Advertencia:** esta clasificación es exclusivamente educativa, usa reglas ficticias y limitadas, y no constituye diagnóstico ni sustituye la evaluación de un profesional de la salud. No ofrece medicamentos, tratamientos ni recomendaciones de automedicación.
 
+## MCP Client
+
+`PharmacyMCPClient` es un cliente local con estado mínimo y un contador determinista de identificadores JSON-RPC. Recibe una instancia de `PharmacyMCPServer`, construye objetos `Request` de nuestra capa manual y entrega cada solicitud a `server.process_request()`. La comunicación actual sucede completamente en memoria: no utiliza HTTP, sockets ni un servidor remoto.
+
+El flujo completo es:
+
+```text
+User
+  → Client
+  → JSON-RPC Request
+  → MCP Server
+  → classify_symptoms
+  → JSON-RPC Response
+  → Client
+  → User
+```
+
+Antes de listar o ejecutar herramientas, debe seleccionarse `Initialize`. Después, `List tools` obtiene realmente `classify_symptoms` desde `tools/list`, y `Classify symptoms` envía los identificadores mediante `tools/call`. Una entrada inválida como `fever, magic_symptom` se envía sin corrección silenciosa y muestra el error producido por el servidor.
+
+Debido al layout `src/`, primero debe incluirse ese directorio en la ruta de módulos. En PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m pharmacy_mcp.client.cli
+```
+
+En una terminal compatible con Bash:
+
+```bash
+PYTHONPATH=src python -m pharmacy_mcp.client.cli
+```
+
+La interfaz ofrece las opciones `Initialize`, `List tools`, `Classify symptoms` y `Exit`. No contiene el catálogo ni las reglas de clasificación; toda clasificación pasa por el servidor y su herramienta MCP.
+
 ## Project Status
 
-**Cuarta etapa de desarrollo.** El repositorio contiene la capa manual de JSON-RPC 2.0, el núcleo local del servidor MCP y la herramienta educativa `classify_symptoms`. Todavía no incluye cliente MCP, transporte, conexión con un LLM, medicamentos ni recomendaciones médicas.
+**Quinta etapa de desarrollo.** El repositorio contiene la capa manual de JSON-RPC 2.0, el servidor MCP, `classify_symptoms` y un cliente local interactivo. Todavía no incluye transporte de red, conexión con un LLM, medicamentos ni recomendaciones médicas.
 
 ## Preparación del entorno
 
