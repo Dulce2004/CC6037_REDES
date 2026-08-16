@@ -1,6 +1,6 @@
 # PharmaMCP — Proyecto 1 de Redes
 
-Base inicial para un proyecto educativo de redes que implementará manualmente un protocolo basado en MCP mediante mensajes JSON-RPC. El caso de uso será un sistema de farmacia capaz de clasificar casos a partir de síntomas.
+Es la Base inicial para el proyecto redes que implementará manualmente un protocolo basado en MCP mediante mensajes JSON-RPC. El caso de uso será un sistema de farmacia capaz de clasificar casos a partir de síntomas.
 
 ## Curso
 
