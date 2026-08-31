@@ -1,0 +1,166 @@
+[
+  {
+    "sku": "MED-ANA-001",
+    "name": "Acetaminofén 500 mg",
+    "aliases": ["paracetamol 500 mg", "acetaminofen"],
+    "active_ingredient": "acetaminofén",
+    "therapeutic_category": "analgesic_antipyretic",
+    "dosage_information": "Caja con 20 tabletas de 500 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia al acetaminofén",
+      "Enfermedad hepática grave"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 1895,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-ANA-002",
+    "name": "Ibuprofeno 200 mg",
+    "aliases": ["ibuprofen 200 mg", "ibuprofeno"],
+    "active_ingredient": "ibuprofeno",
+    "therapeutic_category": "analgesic_antipyretic",
+    "dosage_information": "Caja con 20 tabletas de 200 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia a antiinflamatorios no esteroideos",
+      "Úlcera péptica activa",
+      "Enfermedad renal grave"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 2475,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-ANT-001",
+    "name": "Loratadina 10 mg",
+    "aliases": ["loratadine 10 mg", "loratadina"],
+    "active_ingredient": "loratadina",
+    "therapeutic_category": "antihistamine",
+    "dosage_information": "Caja con 10 tabletas de 10 mg; dato de presentación del catálogo.",
+    "contraindications": ["Alergia a la loratadina"],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 2850,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-ANT-002",
+    "name": "Cetirizina 10 mg",
+    "aliases": ["cetirizine 10 mg", "cetirizina"],
+    "active_ingredient": "cetirizina",
+    "therapeutic_category": "antihistamine",
+    "dosage_information": "Caja con 10 tabletas de 10 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia a la cetirizina",
+      "Enfermedad renal grave sin evaluación profesional"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 3195,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-GAS-001",
+    "name": "Subsalicilato de bismuto 262 mg",
+    "aliases": ["bismuto masticable", "bismuth subsalicylate"],
+    "active_ingredient": "subsalicilato de bismuto",
+    "therapeutic_category": "gastrointestinal",
+    "dosage_information": "Caja con 12 tabletas masticables de 262 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia a salicilatos",
+      "Tratamiento anticoagulante sin evaluación profesional"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 3690,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-GAS-002",
+    "name": "Sales de rehidratación oral",
+    "aliases": ["suero oral en sobres", "oral rehydration salts"],
+    "active_ingredient": "sales de rehidratación oral",
+    "therapeutic_category": "gastrointestinal",
+    "dosage_information": "Caja con 4 sobres de polvo para solución; dato de presentación del catálogo.",
+    "contraindications": [
+      "Restricción médica estricta de sodio sin evaluación profesional"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 1625,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-RES-001",
+    "name": "Dextrometorfano jarabe 15 mg/5 mL",
+    "aliases": ["jarabe para la tos", "dextromethorphan syrup"],
+    "active_ingredient": "dextrometorfano",
+    "therapeutic_category": "cold_and_cough",
+    "dosage_information": "Frasco de 120 mL con concentración de 15 mg/5 mL; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia al dextrometorfano",
+      "Uso concomitante de inhibidores de la monoaminooxidasa"
+    ],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 4250,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-RES-002",
+    "name": "Solución salina nasal 0.65%",
+    "aliases": ["spray nasal salino", "solucion salina nasal"],
+    "active_ingredient": "cloruro de sodio",
+    "therapeutic_category": "cold_and_cough",
+    "dosage_information": "Frasco atomizador de 30 mL al 0.65%; dato de presentación del catálogo.",
+    "contraindications": ["Alergia a cualquier componente de la presentación"],
+    "requires_prescription": false,
+    "price": {
+      "amount_centavos": 2290,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-RX-001",
+    "name": "Amoxicilina 500 mg",
+    "aliases": ["amoxicillin 500 mg", "amoxicilina"],
+    "active_ingredient": "amoxicilina",
+    "therapeutic_category": "antibiotic",
+    "dosage_information": "Caja con 21 cápsulas de 500 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia a penicilinas",
+      "Antecedente de reacción grave a antibióticos betalactámicos"
+    ],
+    "requires_prescription": true,
+    "price": {
+      "amount_centavos": 6875,
+      "currency": "GTQ"
+    }
+  },
+  {
+    "sku": "MED-RX-002",
+    "name": "Azitromicina 500 mg",
+    "aliases": ["azithromycin 500 mg", "azitromicina"],
+    "active_ingredient": "azitromicina",
+    "therapeutic_category": "antibiotic",
+    "dosage_information": "Caja con 3 tabletas de 500 mg; dato de presentación del catálogo.",
+    "contraindications": [
+      "Alergia a macrólidos",
+      "Antecedentes de alteraciones graves del ritmo cardíaco sin evaluación profesional"
+    ],
+    "requires_prescription": true,
+    "price": {
+      "amount_centavos": 9490,
+      "currency": "GTQ"
+    }
+  }
+]
