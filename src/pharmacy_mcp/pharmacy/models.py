@@ -106,3 +106,22 @@ class Medication:
             raise ValueError("'requires_prescription' must be a boolean.")
         if not isinstance(self.price, Money):
             raise ValueError("'price' must be a Money instance.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InventoryRecord:
+    """Cantidad disponible de un SKU en una sucursal específica."""
+
+    branch_id: str
+    sku: str
+    quantity: int
+
+    def __post_init__(self) -> None:
+        _validate_text(self.branch_id, "branch_id")
+        _validate_text(self.sku, "sku")
+        if not _SKU_FORMAT.fullmatch(self.sku):
+            raise ValueError("'sku' must use uppercase letters, numbers, and hyphens.")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, int):
+            raise ValueError("'quantity' must be an integer.")
+        if self.quantity < 0:
+            raise ValueError("'quantity' must be greater than or equal to zero.")

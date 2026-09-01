@@ -10,6 +10,8 @@ The current delivery focuses on a local MCP server. It uses only the Python stan
 
 The project models a small pharmacy-oriented system that classifies controlled symptom identifiers into educational categories. The classification rules are explicit and deterministic; the system does not interpret natural language and does not recommend medication or treatment.
 
+The domain also includes simulated, read-only inventory for the Zona 5, Zona 15, and Mixco branches. Stock is tracked independently by branch and medication SKU. Purchase operations and stock modifications are not implemented yet.
+
 > **Medical disclaimer:** This project is for educational purposes only. Its output is not a medical diagnosis and does not replace evaluation or advice from a qualified healthcare professional.
 
 ## Architecture

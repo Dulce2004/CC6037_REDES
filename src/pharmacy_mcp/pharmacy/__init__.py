@@ -7,7 +7,13 @@ from .catalog import (
     load_default_catalog,
 )
 from .classifier import SymptomValidationError, classify_symptoms
-from .models import CATALOG_CURRENCY, Branch, Medication, Money
+from .inventory import (
+    InventoryLookupError,
+    InventoryRepository,
+    InventoryValidationError,
+    load_default_inventory,
+)
+from .models import CATALOG_CURRENCY, Branch, InventoryRecord, Medication, Money
 from .symptoms import (
     CATEGORY_SYMPTOMS,
     MINIMUM_MATCHING_SYMPTOMS,
@@ -22,10 +28,15 @@ __all__ = [
     "RECOGNIZED_SYMPTOMS",
     "Branch",
     "CatalogValidationError",
+    "InventoryLookupError",
+    "InventoryRecord",
+    "InventoryRepository",
+    "InventoryValidationError",
     "Medication",
     "Money",
     "PharmacyCatalog",
     "SymptomValidationError",
     "classify_symptoms",
     "load_default_catalog",
+    "load_default_inventory",
 ]
