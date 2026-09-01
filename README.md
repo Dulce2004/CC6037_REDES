@@ -1,184 +1,203 @@
 # PharmaMCP
 
-## Project Overview
+## Project overview
 
-PharmaMCP is an educational command-line project for **CC3067 Networks**. It demonstrates how a client and a local Model Context Protocol (MCP) server can exchange structured operations through a manually implemented JSON-RPC 2.0 layer.
+PharmaMCP is an academic pharmacy project that demonstrates a local Model Context
+Protocol (MCP) server built manually on JSON-RPC 2.0. The protocol messages,
+server lifecycle, method dispatch, tool registry, and stdio transport use only the
+Python standard library. The project does not use FastMCP, an MCP SDK, or an
+external JSON-RPC package.
 
-The current delivery focuses on a local MCP server. It uses only the Python standard library and does not use FastMCP, an MCP SDK, or an external JSON-RPC library.
+The current server accepts newline-delimited JSON-RPC messages over standard
+input and returns protocol responses over standard output. A direct in-memory
+client and its interactive CLI remain available for local demonstrations and
+tests.
 
-## Use Case
+> **Medical disclaimer:** This project is for education and demonstration only.
+> It does not provide a diagnosis, recommend treatment, or replace advice from a
+> qualified healthcare professional.
 
-The project models a small pharmacy-oriented system that classifies controlled symptom identifiers into educational categories. The classification rules are explicit and deterministic; the system does not interpret natural language and does not recommend medication or treatment.
+## Current status
 
-The domain also includes simulated, read-only inventory for the Zona 5, Zona 15, and Mixco branches. Stock is tracked independently by branch and medication SKU. Purchase operations and stock modifications are not implemented yet.
+The implemented MCP subset supports:
 
-> **Medical disclaimer:** This project is for educational purposes only. Its output is not a medical diagnosis and does not replace evaluation or advice from a qualified healthcare professional.
+- MCP protocol version `2025-11-25`.
+- The `UNINITIALIZED`, `INITIALIZING`, and `READY` lifecycle states.
+- `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
+- A tools capability with `listChanged: false`.
+- One registered MCP tool: `classify_symptoms`.
+- A manual stdio transport using UTF-8 NDJSON framing: one JSON object per line.
+- JSON-RPC responses and standard error objects with request-ID correlation.
+- Notifications that never produce a JSON-RPC response.
+- Graceful process termination when stdin reaches EOF.
+
+The pharmacy domain also contains a validated medication catalog and simulated,
+read-only inventory for Zona 5, Zona 15, and Mixco. Those data stores are not yet
+published as MCP tools. The stdio server currently exposes only
+`classify_symptoms`.
+
+## Implemented features
+
+- Manual JSON-RPC 2.0 request, notification, response, error, serialization, and
+  deserialization support.
+- Stateful MCP initialization and readiness enforcement.
+- Tool registration, discovery, argument checks, and invocation.
+- Deterministic classification of controlled symptom identifiers into
+  respiratory, allergy, gastrointestinal, or unclassified results.
+- Standard-input/standard-output process transport without replacing the
+  existing in-memory client-server path.
+- Unit, integration, lifecycle, catalog, inventory, and subprocess transport
+  tests.
 
 ## Architecture
 
-The project separates protocol, server, client, and domain responsibilities:
-
 ```text
-User
-  -> Command-line interface
-  -> Local MCP client
-  -> JSON-RPC Request object
-  -> Local MCP server
-  -> classify_symptoms tool
-  -> Pharmacy classification rules
+MCP client process
+  -> stdin: one UTF-8 JSON-RPC object plus LF
+  -> stdio transport
+  -> manual JSON-RPC deserializer
+  -> stateful local MCP server
+  -> method dispatcher / tool registry
+  -> classify_symptoms adapter
+  -> deterministic pharmacy domain logic
   -> JSON-RPC Response or ErrorResponse
-  -> User
+  -> stdout: one UTF-8 JSON-RPC object plus LF
 ```
 
-The client passes validated JSON-RPC message objects directly to the server in memory. There is no network transport in this delivery.
+The stdio loop owns one `PharmacyMCPServer` instance, so lifecycle state is
+preserved across input lines until EOF. Protocol output is reserved for stdout;
+unexpected transport diagnostics go to stderr.
 
-## Features
-
-- Manual JSON-RPC 2.0 request, response, error, serialization, and deserialization support.
-- Local MCP server with `initialize`, `tools/list`, and `tools/call`.
-- Tool registration and discovery.
-- One registered tool: `classify_symptoms`.
-- Deterministic respiratory, allergy, and gastrointestinal classification rules.
-- Controlled handling of invalid requests, methods, parameters, and symptoms.
-- Stateful local MCP client and interactive terminal interface.
-- Automated unit and integration tests.
-
-## Project Structure
+## Repository structure
 
 ```text
 .
 |-- docs/
+|   |-- Proyecto 1 - Uso de un protocolo existente.pdf
 |   |-- demo-guide.md
-|   `-- Chatbot - Avance 1.pdf
+|   `-- mcp-server-specification.md
 |-- src/
 |   `-- pharmacy_mcp/
-|       |-- client/       # Local client and command-line interface
+|       |-- client/       # Existing in-memory client and interactive CLI
 |       |-- jsonrpc/      # Manual JSON-RPC messages, errors, and conversion
-|       |-- pharmacy/     # Controlled symptoms and classification rules
-|       `-- server/       # Local MCP server and tool adapter
-|-- tests/                # Unit and integration tests
-|-- .gitignore
+|       |-- pharmacy/     # Symptoms, catalog, inventory, models, and data
+|       `-- server/       # MCP core, tool adapter, and stdio entry point
+|-- tests/                # Unit, integration, lifecycle, and stdio tests
 |-- README.md
 `-- requirements.txt
 ```
 
 ## Requirements
 
-- Python 3.12, which is the version used to verify this delivery.
-- A terminal such as PowerShell or a Bash-compatible shell.
+- Python 3.12, the version declared for this project.
+- PowerShell or a Bash-compatible terminal.
 
-No external Python packages are required. `requirements.txt` intentionally contains no package dependencies.
+There are no third-party runtime dependencies. `requirements.txt` intentionally
+contains no package requirements, so creating a virtual environment is optional.
 
-## Installation
+## Start the stdio server
 
-Clone or download the repository and open a terminal at its root. A virtual environment is optional because this delivery uses only the Python standard library.
-
-PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
+Run the command from the repository root.
 
 Bash-compatible shell:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+PYTHONPATH=src python -m pharmacy_mcp.server.stdio
 ```
-
-## Running
-
-From the repository root, start the interactive client with:
 
 PowerShell:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m pharmacy_mcp.client.cli
+python -m pharmacy_mcp.server.stdio
 ```
 
-Bash-compatible shell:
+The process waits for one complete JSON-RPC object on each input line. Complete
+the MCP handshake before calling tools:
+
+1. Send an `initialize` request.
+2. Read its response.
+3. Send `notifications/initialized` without an `id`.
+4. Send `tools/list` or `tools/call` requests.
+5. Close stdin to terminate the server cleanly.
+
+Do not send pretty-printed, multi-line JSON. The stdio implementation uses a
+newline as its message delimiter.
+
+The existing interactive in-memory client can still be started with:
 
 ```bash
 PYTHONPATH=src python -m pharmacy_mcp.client.cli
 ```
 
-The CLI provides four options: initialize the client, list server tools, classify symptoms, and exit. Initialize the client before listing or calling tools.
+## Run the tests
 
-## Testing
-
-Run the complete test suite from the repository root:
-
-PowerShell:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
-```
-
-Bash-compatible shell:
+From the repository root:
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python -B -m unittest discover -s tests -v
 ```
 
-The suite covers JSON-RPC messages, the local server, the pharmacy domain, tool integration, the client, and complete local client-server flows.
+PowerShell equivalent:
 
-## MCP Operations
+```powershell
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTHONPATH = "src"
+python -B -m unittest discover -s tests -v
+```
 
-The local server implements this educational MCP subset:
+The suite discovers all current tests instead of relying on a hard-coded test
+count. It includes a subprocess test of the real stdio module entry point.
 
-- `initialize`: returns the declared protocol version, server information, and tool capabilities.
-- `tools/list`: returns the public definitions of registered tools.
-- `tools/call`: validates a tool name and arguments, then executes its handler.
+## Documentation
 
-The server declares protocol version `2025-11-25`, server name `Pharmacy MCP Server`, and server version `0.1.0`. See [the local server specification](docs/mcp-server-specification.md) for request, response, parameter, and error details.
+- [Local MCP server specification](docs/mcp-server-specification.md)
+- [Reproducible stdio demonstration guide](docs/demo-guide.md)
 
-## Pharmacy Tool
+The specification contains the exact lifecycle, message shapes, method behavior,
+tool schema, result format, and implemented errors. The demonstration guide walks
+through a complete manual handshake and tool call.
 
-`classify_symptoms` requires a non-empty `symptoms` array containing controlled string identifiers. It trims surrounding whitespace, normalizes text to lowercase, removes duplicates, and rejects unsupported values.
+## Current limitations
 
-Supported categories and symptoms are:
+- Only local stdio and direct in-memory communication are implemented; there is
+  no HTTP or remote transport.
+- Messages are processed sequentially by one server instance; there is no
+  concurrent request execution.
+- NDJSON batches and multi-line JSON documents are not supported.
+- Only `classify_symptoms` is registered as an MCP tool.
+- Catalog and inventory data are read-only domain components and are not exposed
+  through MCP.
+- The published input schema is descriptive, while runtime validation is manual
+  rather than a complete JSON Schema implementation.
+- Prompts, resources, pagination, cancellation, progress, logging messages,
+  subscriptions, server-initiated requests, and tool-list change notifications
+  are not implemented.
+- There is no authentication because the server is a local child process using
+  stdio.
+- There is no LLM integration and no natural-language symptom interpretation.
+- The tool consumes controlled identifiers and must not be treated as medical
+  advice.
 
-- `respiratory`: `fever`, `cough`, `sore_throat`.
-- `allergy`: `sneezing`, `nasal_congestion`, `itchy_eyes`.
-- `gastrointestinal`: `nausea`, `diarrhea`, `abdominal_pain`.
+## Future work
 
-A category requires at least two distinct matching symptoms. If no category reaches that threshold, or if the best categories are tied, the result is `unclassified`.
+The following items are planned possibilities, not implemented functionality:
 
-## Error Handling
+- Evolve `classify_symptoms` into a broader symptom-assessment workflow.
+- Publish medication search, medication detail, interaction, allergy, and
+  branch-stock tools backed by controlled simulated data.
+- Add purchase-order creation and order-status tools with prescription and stock
+  validation.
+- Integrate an LLM for natural-language interaction.
+- Add Streamable HTTP and a remote-server deployment.
+- Explore separate Git and Filesystem MCP servers.
+- Capture and analyze later network transports with Wireshark.
 
-The manual JSON-RPC layer defines and supports these standard codes:
+## Technical references
 
-| Code | Name | Current use |
-| ---: | --- | --- |
-| `-32700` | Parse error | Malformed JSON passed to the deserializer. |
-| `-32600` | Invalid Request | Invalid JSON-RPC structure or unsupported request type. |
-| `-32601` | Method not found | Operation not registered by the server. |
-| `-32602` | Invalid params | Invalid operation parameters, tool name, arguments, or symptoms. |
-| `-32603` | Internal error | Unexpected handler or response-construction failure. |
-
-The client displays server errors as `Error <code>: <message>` without exposing a traceback.
-
-## Current Limitations
-
-- Communication is local and occurs through in-memory Python objects.
-- There are no network endpoints, URLs, ports, HTTP handlers, or sockets.
-- The implementation is an educational MCP subset rather than a complete MCP lifecycle implementation.
-- It does not provide full JSON Schema validation or MCP notification handling.
-- It does not interpret natural-language symptoms or provide medical recommendations.
-
-## Future Work
-
-The following items are planned for later stages and are **not part of Delivery 1**:
-
-- Integration with an LLM through an API.
-- A remote MCP server.
-- Wireshark communication analysis.
-
-## Project Status
-
-**Delivery 1 — Local MCP Server.** The manual JSON-RPC layer, local MCP server, `classify_symptoms` tool, local client, CLI, automated tests, server specification, and demonstration guide are implemented. The current transport is in memory, and no network endpoint exists.
+- [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
+- [MCP Specification, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
+- [MCP architecture, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/architecture)
+- [MCP lifecycle, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
+- [MCP transports, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+- [MCP tools, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
