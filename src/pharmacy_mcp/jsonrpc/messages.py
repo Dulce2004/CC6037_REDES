@@ -99,6 +99,12 @@ class Request:
             message["id"] = self.id
         return message
 
+    @property
+    def is_notification(self) -> bool:
+        """Indica si el miembro ``id`` está ausente, incluso frente a ``null``."""
+
+        return self.id is _NOT_PROVIDED
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Response:

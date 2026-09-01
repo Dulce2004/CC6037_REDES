@@ -18,12 +18,33 @@ from pharmacy_mcp.jsonrpc import (  # noqa: E402
     Request,
     Response,
 )
-from pharmacy_mcp.server import PharmacyMCPServer  # noqa: E402
+from pharmacy_mcp.server import (  # noqa: E402
+    SUPPORTED_PROTOCOL_VERSION,
+    PharmacyMCPServer,
+)
+
+
+def initialize_params() -> dict[str, object]:
+    return {
+        "protocolVersion": SUPPORTED_PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "Server Test Client", "version": "1.0.0"},
+    }
 
 
 class PharmacyMCPServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.server = PharmacyMCPServer()
+
+    def make_server_ready(self) -> None:
+        initialization = self.server.process_request(
+            Request(method="initialize", params=initialize_params(), id=100)
+        )
+        self.assertIsInstance(initialization, Response)
+        notification_result = self.server.process_request(
+            Request(method="notifications/initialized", params={})
+        )
+        self.assertIsNone(notification_result)
 
     @staticmethod
     def echo_handler(arguments: dict[str, object]) -> dict[str, object]:
@@ -46,7 +67,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_initialize_returns_valid_response(self) -> None:
         response = self.server.process_request(
-            Request(method="initialize", params={}, id=1)
+            Request(method="initialize", params=initialize_params(), id=1)
         )
 
         self.assertIsInstance(response, Response)
@@ -55,7 +76,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_initialize_includes_server_information(self) -> None:
         response = self.server.process_request(
-            Request(method="initialize", params={}, id=1)
+            Request(method="initialize", params=initialize_params(), id=1)
         )
 
         self.assertEqual(
@@ -66,6 +87,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertIn("capabilities", response.result)
 
     def test_tools_list_returns_list(self) -> None:
+        self.make_server_ready()
+
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=2)
         )
@@ -74,6 +97,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertIsInstance(response.result["tools"], list)
 
     def test_tools_list_includes_default_pharmacy_tool(self) -> None:
+        self.make_server_ready()
+
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=2)
         )
@@ -82,6 +107,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertIn("classify_symptoms", tool_names)
 
     def test_unknown_tool_returns_invalid_params_error(self) -> None:
+        self.make_server_ready()
+
         response = self.server.process_request(
             Request(
                 method="tools/call",
@@ -104,6 +131,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_register_fictitious_tool(self) -> None:
         self.register_echo()
+        self.make_server_ready()
 
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=5)
@@ -114,6 +142,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_tools_list_shows_registered_tool(self) -> None:
         self.register_echo()
+        self.make_server_ready()
 
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=6)
@@ -129,6 +158,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_tools_call_executes_fictitious_tool(self) -> None:
         self.register_echo()
+        self.make_server_ready()
 
         response = self.server.process_request(
             Request(
@@ -154,6 +184,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
             input_schema={"type": "object"},
             handler=failing_handler,
         )
+        self.make_server_ready()
 
         response = self.server.process_request(
             Request(
@@ -168,6 +199,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertEqual(response.error.message, "Internal error")
 
     def test_tools_call_requires_name(self) -> None:
+        self.make_server_ready()
+
         response = self.server.process_request(
             Request(method="tools/call", params={"arguments": {}}, id=9)
         )
@@ -176,6 +209,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_tools_call_rejects_non_object_arguments(self) -> None:
+        self.make_server_ready()
+
         response = self.server.process_request(
             Request(
                 method="tools/call",
@@ -189,6 +224,7 @@ class PharmacyMCPServerTests(unittest.TestCase):
 
     def test_tools_call_requires_arguments_declared_by_schema(self) -> None:
         self.register_echo()
+        self.make_server_ready()
 
         response = self.server.process_request(
             Request(

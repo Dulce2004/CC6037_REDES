@@ -6,12 +6,14 @@ from .errors import (
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
+    SERVER_NOT_INITIALIZED,
     InternalError,
     InvalidParamsError,
     InvalidRequestError,
     JsonRpcError,
     MethodNotFoundError,
     ParseError,
+    ServerNotInitializedError,
 )
 from .messages import ErrorObject, ErrorResponse, Request, Response
 from .protocol import deserialize_message, serialize_message
@@ -22,6 +24,7 @@ __all__ = [
     "INVALID_REQUEST",
     "METHOD_NOT_FOUND",
     "PARSE_ERROR",
+    "SERVER_NOT_INITIALIZED",
     "ErrorObject",
     "ErrorResponse",
     "InternalError",
@@ -32,6 +35,7 @@ __all__ = [
     "ParseError",
     "Request",
     "Response",
+    "ServerNotInitializedError",
     "deserialize_message",
     "serialize_message",
 ]

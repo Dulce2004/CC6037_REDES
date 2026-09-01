@@ -34,6 +34,19 @@ class JsonRpcMessageTests(unittest.TestCase):
             {"jsonrpc": "2.0", "method": "example.method", "params": {}, "id": 1},
         )
 
+    def test_request_without_id_is_a_notification(self) -> None:
+        request = Request(method="example.notification", params={})
+
+        self.assertTrue(request.is_notification)
+        self.assertNotIn("id", request.to_dict())
+
+    def test_request_with_null_id_is_not_a_notification(self) -> None:
+        request = Request(method="example.method", params={}, id=None)
+
+        self.assertFalse(request.is_notification)
+        self.assertIn("id", request.to_dict())
+        self.assertIsNone(request.to_dict()["id"])
+
     def test_serialize_request(self) -> None:
         request = Request(method="example.method", params={"value": 3}, id="req-1")
 

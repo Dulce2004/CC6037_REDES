@@ -5,6 +5,7 @@ INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
+SERVER_NOT_INITIALIZED = -32002
 
 
 class JsonRpcError(ValueError):
@@ -51,3 +52,10 @@ class InternalError(JsonRpcError):
 
     code = INTERNAL_ERROR
     default_message = "Internal error"
+
+
+class ServerNotInitializedError(JsonRpcError):
+    """Indica que una operación MCP requiere completar la inicialización."""
+
+    code = SERVER_NOT_INITIALIZED
+    default_message = "Server not initialized"

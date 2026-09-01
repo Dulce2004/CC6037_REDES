@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from pharmacy_mcp.jsonrpc import (
+    INTERNAL_ERROR,
     INVALID_REQUEST,
     ErrorResponse,
     JsonRpcError,
@@ -13,7 +14,10 @@ from pharmacy_mcp.jsonrpc import (
     Response,
 )
 from pharmacy_mcp.jsonrpc.messages import JsonValue
-from pharmacy_mcp.server import PharmacyMCPServer
+from pharmacy_mcp.server import PharmacyMCPServer, SUPPORTED_PROTOCOL_VERSION
+
+CLIENT_NAME = "Pharmacy MCP Client"
+CLIENT_VERSION = "0.1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +52,17 @@ class PharmacyMCPClient:
     def initialize(self) -> ClientExchange:
         """Inicializa el cliente y guarda la información devuelta por el servidor."""
 
-        response = self._send_request("initialize", {})
+        response = self._send_request(
+            "initialize",
+            {
+                "protocolVersion": SUPPORTED_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": CLIENT_NAME,
+                    "version": CLIENT_VERSION,
+                },
+            },
+        )
         if isinstance(response, ClientError):
             return response
 
@@ -60,11 +74,28 @@ class PharmacyMCPClient:
         server_info = result.get("serverInfo")
         capabilities = result.get("capabilities")
         if (
-            not isinstance(protocol_version, str)
+            protocol_version != SUPPORTED_PROTOCOL_VERSION
             or not isinstance(server_info, dict)
             or not isinstance(capabilities, dict)
         ):
             return ClientError("Invalid initialize result.", INVALID_REQUEST)
+
+        server_name = server_info.get("name")
+        server_version = server_info.get("version")
+        if (
+            not isinstance(server_name, str)
+            or not server_name.strip()
+            or not isinstance(server_version, str)
+            or not server_version.strip()
+        ):
+            return ClientError("Invalid initialize result.", INVALID_REQUEST)
+
+        notification_error = self._send_notification(
+            "notifications/initialized",
+            {},
+        )
+        if notification_error is not None:
+            return notification_error
 
         self.protocol_version = protocol_version
         self.server_info = server_info
@@ -125,13 +156,36 @@ class PharmacyMCPClient:
             return ClientError(exc.message, exc.code)
 
         response = self._server.process_request(request)
+        if response is None:
+            return ClientError(
+                "Server did not return a response to a request.",
+                INVALID_REQUEST,
+            )
+        if not isinstance(response, (Response, ErrorResponse)):
+            return ClientError("Invalid response type.", INVALID_REQUEST)
         if response.id != request_id:
             return ClientError("Response id does not match request id.", INVALID_REQUEST)
         if isinstance(response, ErrorResponse):
             return ClientError(response.error.message, response.error.code)
-        if not isinstance(response, Response):
-            return ClientError("Invalid response type.", INVALID_REQUEST)
         return response
+
+    def _send_notification(
+        self,
+        method: str,
+        params: dict[str, JsonValue],
+    ) -> ClientError | None:
+        try:
+            notification = Request(method=method, params=params)
+        except JsonRpcError as exc:
+            return ClientError(exc.message, exc.code)
+
+        response = self._server.process_request(notification)
+        if response is not None:
+            return ClientError(
+                "Server returned a response to a notification.",
+                INTERNAL_ERROR,
+            )
+        return None
 
     def _require_initialized(self) -> ClientError | None:
         if self.is_initialized:

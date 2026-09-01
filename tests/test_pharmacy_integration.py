@@ -15,12 +15,34 @@ from pharmacy_mcp.jsonrpc import (  # noqa: E402
     Request,
     Response,
 )
-from pharmacy_mcp.server import PharmacyMCPServer  # noqa: E402
+from pharmacy_mcp.server import (  # noqa: E402
+    SUPPORTED_PROTOCOL_VERSION,
+    PharmacyMCPServer,
+)
 
 
 class PharmacyToolIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.server = PharmacyMCPServer()
+        initialization = self.server.process_request(
+            Request(
+                method="initialize",
+                params={
+                    "protocolVersion": SUPPORTED_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "Pharmacy Tool Test Client",
+                        "version": "1.0.0",
+                    },
+                },
+                id=100,
+            )
+        )
+        self.assertIsInstance(initialization, Response)
+        notification_result = self.server.process_request(
+            Request(method="notifications/initialized", params={})
+        )
+        self.assertIsNone(notification_result)
 
     def call_classifier(self, symptoms: object, request_id: int = 1) -> object:
         return self.server.process_request(
