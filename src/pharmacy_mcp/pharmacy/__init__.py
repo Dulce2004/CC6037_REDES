@@ -2,6 +2,7 @@
 
 from .catalog import (
     EXPECTED_BRANCH_IDS,
+    CatalogQueryError,
     CatalogValidationError,
     PharmacyCatalog,
     load_default_catalog,
@@ -27,6 +28,7 @@ __all__ = [
     "MINIMUM_MATCHING_SYMPTOMS",
     "RECOGNIZED_SYMPTOMS",
     "Branch",
+    "CatalogQueryError",
     "CatalogValidationError",
     "InventoryLookupError",
     "InventoryRecord",

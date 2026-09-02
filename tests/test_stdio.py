@@ -263,6 +263,83 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(completed.stderr, "")
         self.assertEqual([response["id"] for response in responses], [1, 2])
 
+    def test_stdio_can_call_read_only_stock_tool(self) -> None:
+        payload = "".join(
+            (
+                json_line(initialize_request()),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "check_stock",
+                            "arguments": {
+                                "sku": "MED-ANA-001",
+                                "branch_id": "zona-5",
+                            },
+                        },
+                        "id": 2,
+                    }
+                ),
+            )
+        )
+
+        exit_code, messages, diagnostics, _ = self.run_transport(payload)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(diagnostics, "")
+        self.assertEqual([message["id"] for message in messages], [1, 2])
+        stock = messages[1]["result"]["structuredContent"]["stock"]
+        self.assertEqual(stock[0]["quantity"], 25)
+
+    def test_stdio_returns_domain_failure_as_successful_tool_result(self) -> None:
+        payload = "".join(
+            (
+                json_line(initialize_request()),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "check_stock",
+                            "arguments": {
+                                "sku": "MED-ANA-001",
+                                "branch_id": "zona-10",
+                            },
+                        },
+                        "id": 7,
+                    }
+                ),
+            )
+        )
+
+        exit_code, messages, diagnostics, _ = self.run_transport(payload)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(diagnostics, "")
+        tool_response = messages[1]
+        self.assertEqual(tool_response["id"], 7)
+        self.assertNotIn("error", tool_response)
+        self.assertTrue(tool_response["result"]["isError"])
+        self.assertIn(
+            "Unknown branch",
+            tool_response["result"]["content"][0]["text"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

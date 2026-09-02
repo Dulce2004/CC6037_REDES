@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import MappingProxyType
@@ -17,6 +18,10 @@ _CatalogItem = TypeVar("_CatalogItem")
 
 class CatalogValidationError(ValueError):
     """Indica que los datos externos del catálogo son inválidos o inconsistentes."""
+
+
+class CatalogQueryError(ValueError):
+    """Indica que una consulta del catálogo no tiene parámetros válidos."""
 
 
 class PharmacyCatalog:
@@ -91,6 +96,44 @@ class PharmacyCatalog:
 
     def list_medications(self) -> tuple[Medication, ...]:
         return tuple(self._medications.values())
+
+    def search_medications(
+        self,
+        query: str,
+        *,
+        otc_only: bool = False,
+    ) -> tuple[Medication, ...]:
+        """Busca texto en los campos públicos del medicamento y conserva el orden."""
+
+        if not isinstance(query, str) or not query.strip():
+            raise CatalogQueryError("'query' must be a non-empty string.")
+        if not isinstance(otc_only, bool):
+            raise CatalogQueryError("'otc_only' must be a boolean.")
+
+        normalized_query = _normalize_search_text(query)
+        if not normalized_query:
+            raise CatalogQueryError(
+                "'query' must contain searchable letters or numbers."
+            )
+        matches: list[Medication] = []
+        for medication in self._medications.values():
+            if otc_only and medication.requires_prescription:
+                continue
+
+            searchable_values = (
+                medication.sku,
+                medication.name,
+                *medication.aliases,
+                medication.active_ingredient,
+                medication.therapeutic_category,
+            )
+            if any(
+                normalized_query in _normalize_search_text(value)
+                for value in searchable_values
+            ):
+                matches.append(medication)
+
+        return tuple(matches)
 
 
 def load_default_catalog() -> PharmacyCatalog:
@@ -217,3 +260,14 @@ def _validate_unique_text(values: Iterable[str], *, label: str) -> None:
         if normalized in seen:
             raise CatalogValidationError(f"Duplicate {label}: '{value}'.")
         seen.add(normalized)
+
+
+def _normalize_search_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.casefold())
+    without_accents = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    words = without_accents.replace("_", " ").replace("-", " ").split()
+    return " ".join(words)

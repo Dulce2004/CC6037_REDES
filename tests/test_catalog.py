@@ -14,6 +14,7 @@ from pharmacy_mcp.pharmacy import (  # noqa: E402
     CATALOG_CURRENCY,
     EXPECTED_BRANCH_IDS,
     Branch,
+    CatalogQueryError,
     CatalogValidationError,
     Money,
     PharmacyCatalog,
@@ -144,6 +145,56 @@ class CatalogIntegrityTests(unittest.TestCase):
     def test_catalog_collections_are_read_only_tuples(self) -> None:
         self.assertIsInstance(self.branches, tuple)
         self.assertIsInstance(self.medications, tuple)
+
+    def test_search_medications_matches_public_catalog_fields(self) -> None:
+        cases = {
+            "acetaminofen": "MED-ANA-001",
+            "paracetamol": "MED-ANA-001",
+            "cloruro de sodio": "MED-RES-002",
+            "cold_and_cough": "MED-RES-001",
+            "med rx 002": "MED-RX-002",
+        }
+
+        for query, expected_sku in cases.items():
+            with self.subTest(query=query):
+                matches = self.catalog.search_medications(query)
+                self.assertIn(expected_sku, {item.sku for item in matches})
+
+    def test_search_medications_is_case_and_accent_insensitive(self) -> None:
+        matches = self.catalog.search_medications("  SOLUCIÓN SALINA  ")
+
+        self.assertEqual([item.sku for item in matches], ["MED-RES-002"])
+
+    def test_search_medications_can_filter_prescription_items(self) -> None:
+        all_matches = self.catalog.search_medications("500 mg")
+        otc_matches = self.catalog.search_medications("500 mg", otc_only=True)
+
+        self.assertEqual(
+            [item.sku for item in all_matches],
+            ["MED-ANA-001", "MED-RX-001", "MED-RX-002"],
+        )
+        self.assertEqual([item.sku for item in otc_matches], ["MED-ANA-001"])
+
+    def test_search_medications_returns_read_only_empty_tuple(self) -> None:
+        matches = self.catalog.search_medications("missing medicine")
+
+        self.assertEqual(matches, ())
+        self.assertIsInstance(matches, tuple)
+
+    def test_search_medications_rejects_invalid_query(self) -> None:
+        for query in (None, "", "   ", "---", "___", 123):
+            with self.subTest(query=query):
+                with self.assertRaisesRegex(CatalogQueryError, "query"):
+                    self.catalog.search_medications(query)
+
+    def test_search_medications_rejects_non_boolean_filter(self) -> None:
+        for otc_only in (None, 1, "true"):
+            with self.subTest(otc_only=otc_only):
+                with self.assertRaisesRegex(CatalogQueryError, "otc_only"):
+                    self.catalog.search_medications(
+                        "acetaminofen",
+                        otc_only=otc_only,
+                    )
 
     def test_money_rejects_float_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "integer"):

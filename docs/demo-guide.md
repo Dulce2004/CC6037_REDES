@@ -89,66 +89,119 @@ Input:
 {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
 ```
 
-Expected stdout response:
+The response with ID `2` contains four definitions in this order:
 
 ```json
-{"jsonrpc":"2.0","result":{"tools":[{"name":"classify_symptoms","description":"Classifies controlled symptom identifiers into educational categories.","inputSchema":{"type":"object","properties":{"symptoms":{"type":"array","items":{"type":"string","enum":["abdominal_pain","cough","diarrhea","fever","itchy_eyes","nasal_congestion","nausea","sneezing","sore_throat"]},"minItems":1}},"required":["symptoms"],"additionalProperties":false}}]},"id":2}
+["classify_symptoms","search_medications","get_medication_details","check_stock"]
 ```
 
-Confirm that exactly one tool, `classify_symptoms`, is present. Medication search,
-stock lookup, interaction checking, and ordering tools are not implemented yet.
+Each definition includes `name`, `description`, and `inputSchema`. The exact
+schemas are reproduced in the [server specification](mcp-server-specification.md#tools).
 
-## Step 4: invoke the tool successfully
+## Step 4: search the medication catalog
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","cough"]}},"id":3}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"paracetamol","otc_only":true}},"id":3}
 ```
 
 Expected stdout response:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Classification: respiratory. Matched symptoms: fever, cough. Symptoms match the respiratory category. Educational use only; not a medical diagnosis."}]},"id":3}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Found 1 medication(s): MED-ANA-001 - Acetaminofén 500 mg. Simulated catalog data; not medical advice."}],"structuredContent":{"query":"paracetamol","otc_only":true,"count":1,"medications":[{"sku":"MED-ANA-001","name":"Acetaminofén 500 mg","active_ingredient":"acetaminofén","therapeutic_category":"analgesic_antipyretic","requires_prescription":false,"price":{"amount":"18.95","currency":"GTQ"}}]}},"id":3}
 ```
 
-The output is deterministic and educational. It is not a diagnosis or treatment
-recommendation.
+The result contains both human-readable `content` and machine-readable
+`structuredContent`. Search is case-insensitive and accent-insensitive, and can
+match names, aliases, active ingredients, therapeutic categories, and SKUs.
 
-## Step 5: observe a validation error
+## Step 5: retrieve complete medication details
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","magic_symptom"]}},"id":4}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANA-001"}},"id":4}
 ```
 
-Expected stdout response:
+Inspect `result.structuredContent.medication`. It contains exactly these catalog
+fields:
 
 ```json
-{"jsonrpc":"2.0","error":{"code":-32602,"message":"Unknown symptom: 'magic_symptom'."},"id":4}
+{
+  "sku": "MED-ANA-001",
+  "name": "Acetaminofén 500 mg",
+  "aliases": ["paracetamol 500 mg", "acetaminofen"],
+  "active_ingredient": "acetaminofén",
+  "therapeutic_category": "analgesic_antipyretic",
+  "dosage_information": "Caja con 20 tabletas de 500 mg; dato de presentación del catálogo.",
+  "contraindications": [
+    "Alergia al acetaminofén",
+    "Enfermedad hepática grave"
+  ],
+  "requires_prescription": false,
+  "price": {"amount": "18.95", "currency": "GTQ"}
+}
 ```
 
-The response preserves request ID `4`, allowing the client to correlate the
-error with its request.
+The price amount is a string, not a floating-point value. The displayed dosage
+and contraindications are simulated catalog information, not medical advice.
 
-## Step 6: observe an unclassified result
+## Step 6: check branch inventory
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","itchy_eyes"]}},"id":5}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001"}},"id":5}
+```
+
+Because `branch_id` is omitted, `result.structuredContent.stock` contains all
+three branches:
+
+```json
+[
+  {"branch_id":"zona-5","branch_name":"Zona 5","quantity":25,"available":true},
+  {"branch_id":"zona-15","branch_name":"Zona 15","quantity":12,"available":true},
+  {"branch_id":"mixco","branch_name":"Mixco","quantity":0,"available":false}
+]
+```
+
+For one branch only, send `"branch_id":"zona-5"` with the SKU. This tool is
+read-only and never decrements inventory.
+
+## Step 7: confirm `classify_symptoms` still works
+
+Input:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","cough"]}},"id":6}
 ```
 
 Expected stdout response:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Classification: unclassified. Matched symptoms: none. No supported category matches the provided symptoms. Educational use only; not a medical diagnosis."}]},"id":5}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Classification: respiratory. Matched symptoms: fever, cough. Symptoms match the respiratory category. Educational use only; not a medical diagnosis."}]},"id":6}
 ```
 
-No category has the two distinct matches required by the controlled rules.
+## Step 8: observe a controlled lookup error
 
-## Step 7: terminate with EOF
+Input:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-10"}},"id":7}
+```
+
+Expected stdout response:
+
+```json
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":7}
+```
+
+The response preserves request ID `7` and is successful at the JSON-RPC layer.
+The `isError: true` member reports that the well-formed tool execution could not
+complete its domain lookup.
+
+## Step 9: terminate with EOF
 
 Close the server's stdin:
 
@@ -161,20 +214,22 @@ implemented clean-termination mechanism.
 
 ## Optional: run the complete exchange non-interactively
 
-The following Bash command sends the lifecycle and one tool call, then closes the
-pipe to produce EOF:
+The following Bash command sends the lifecycle and all three read-only query
+tools, then closes the pipe to produce EOF:
 
 ```bash
 printf '%s\n' \
   '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Scripted Demo Client","version":"1.0.0"}},"id":1}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
   '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}' \
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["nausea","diarrhea"]}},"id":3}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":3}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":4}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":5}' \
   | PYTHONPATH=src python -m pharmacy_mcp.server.stdio
 ```
 
-There should be three response lines: initialization, tool listing, and the tool
-result. The initialized notification deliberately has no response.
+There should be five response lines: initialization, tool listing, and three tool
+results. The initialized notification deliberately has no response.
 
 PowerShell equivalent:
 
@@ -184,7 +239,9 @@ $env:PYTHONPATH = "src"
   '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Scripted Demo Client","version":"1.0.0"}},"id":1}'
   '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
   '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["nausea","diarrhea"]}},"id":3}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":3}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":4}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":5}'
 ) | python -m pharmacy_mcp.server.stdio
 ```
 

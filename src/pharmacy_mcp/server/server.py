@@ -20,7 +20,20 @@ from pharmacy_mcp.jsonrpc import (
     ServerNotInitializedError,
 )
 from pharmacy_mcp.jsonrpc.messages import JsonRpcId, JsonValue
+from pharmacy_mcp.pharmacy import load_default_catalog, load_default_inventory
 
+from .catalog_tools import (
+    CHECK_STOCK_DESCRIPTION,
+    CHECK_STOCK_INPUT_SCHEMA,
+    CHECK_STOCK_NAME,
+    GET_MEDICATION_DETAILS_DESCRIPTION,
+    GET_MEDICATION_DETAILS_INPUT_SCHEMA,
+    GET_MEDICATION_DETAILS_NAME,
+    SEARCH_MEDICATIONS_DESCRIPTION,
+    SEARCH_MEDICATIONS_INPUT_SCHEMA,
+    SEARCH_MEDICATIONS_NAME,
+    PharmacyQueryHandlers,
+)
 from .handlers import Tool, ToolHandler
 from .pharmacy_tool import (
     CLASSIFY_SYMPTOMS_DESCRIPTION,
@@ -71,6 +84,30 @@ class PharmacyMCPServer:
             description=CLASSIFY_SYMPTOMS_DESCRIPTION,
             input_schema=CLASSIFY_SYMPTOMS_INPUT_SCHEMA,
             handler=classify_symptoms_handler,
+        )
+        catalog = load_default_catalog()
+        inventory = load_default_inventory(catalog)
+        query_handlers = PharmacyQueryHandlers(
+            catalog=catalog,
+            inventory=inventory,
+        )
+        self.register_tool(
+            name=SEARCH_MEDICATIONS_NAME,
+            description=SEARCH_MEDICATIONS_DESCRIPTION,
+            input_schema=SEARCH_MEDICATIONS_INPUT_SCHEMA,
+            handler=query_handlers.search_medications,
+        )
+        self.register_tool(
+            name=GET_MEDICATION_DETAILS_NAME,
+            description=GET_MEDICATION_DETAILS_DESCRIPTION,
+            input_schema=GET_MEDICATION_DETAILS_INPUT_SCHEMA,
+            handler=query_handlers.get_medication_details,
+        )
+        self.register_tool(
+            name=CHECK_STOCK_NAME,
+            description=CHECK_STOCK_DESCRIPTION,
+            input_schema=CHECK_STOCK_INPUT_SCHEMA,
+            handler=query_handlers.check_stock,
         )
 
     def register_tool(

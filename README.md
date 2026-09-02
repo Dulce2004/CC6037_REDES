@@ -25,16 +25,17 @@ The implemented MCP subset supports:
 - The `UNINITIALIZED`, `INITIALIZING`, and `READY` lifecycle states.
 - `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - A tools capability with `listChanged: false`.
-- One registered MCP tool: `classify_symptoms`.
+- Four registered MCP tools: `classify_symptoms`, `search_medications`,
+  `get_medication_details`, and `check_stock`.
 - A manual stdio transport using UTF-8 NDJSON framing: one JSON object per line.
 - JSON-RPC responses and standard error objects with request-ID correlation.
 - Notifications that never produce a JSON-RPC response.
 - Graceful process termination when stdin reaches EOF.
 
-The pharmacy domain also contains a validated medication catalog and simulated,
-read-only inventory for Zona 5, Zona 15, and Mixco. Those data stores are not yet
-published as MCP tools. The stdio server currently exposes only
-`classify_symptoms`.
+The three query tools reuse the validated medication catalog and simulated,
+read-only inventory for Zona 5, Zona 15, and Mixco. Search covers medication
+names, aliases, active ingredients, therapeutic categories, and SKUs. Inventory
+queries never modify stock.
 
 ## Implemented features
 
@@ -44,6 +45,8 @@ published as MCP tools. The stdio server currently exposes only
 - Tool registration, discovery, argument checks, and invocation.
 - Deterministic classification of controlled symptom identifiers into
   respiratory, allergy, gastrointestinal, or unclassified results.
+- Read-only medication search, complete catalog details, and branch inventory
+  queries with structured results.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
 - Unit, integration, lifecycle, catalog, inventory, and subprocess transport
@@ -58,8 +61,8 @@ MCP client process
   -> manual JSON-RPC deserializer
   -> stateful local MCP server
   -> method dispatcher / tool registry
-  -> classify_symptoms adapter
-  -> deterministic pharmacy domain logic
+  -> symptom or read-only query tool adapter
+  -> deterministic pharmacy domain / catalog / inventory
   -> JSON-RPC Response or ErrorResponse
   -> stdout: one UTF-8 JSON-RPC object plus LF
 ```
@@ -165,9 +168,10 @@ through a complete manual handshake and tool call.
 - Messages are processed sequentially by one server instance; there is no
   concurrent request execution.
 - NDJSON batches and multi-line JSON documents are not supported.
-- Only `classify_symptoms` is registered as an MCP tool.
-- Catalog and inventory data are read-only domain components and are not exposed
-  through MCP.
+- Four tools are registered, but interaction checks and ordering are not yet
+  implemented.
+- Catalog and inventory access is read-only; there are no stock mutations or
+  purchase operations.
 - The published input schema is descriptive, while runtime validation is manual
   rather than a complete JSON Schema implementation.
 - Prompts, resources, pagination, cancellation, progress, logging messages,
@@ -176,16 +180,16 @@ through a complete manual handshake and tool call.
 - There is no authentication because the server is a local child process using
   stdio.
 - There is no LLM integration and no natural-language symptom interpretation.
-- The tool consumes controlled identifiers and must not be treated as medical
-  advice.
+- `classify_symptoms` consumes controlled identifiers, and no tool output should
+  be treated as medical advice.
 
 ## Future work
 
 The following items are planned possibilities, not implemented functionality:
 
 - Evolve `classify_symptoms` into a broader symptom-assessment workflow.
-- Publish medication search, medication detail, interaction, allergy, and
-  branch-stock tools backed by controlled simulated data.
+- Add medication-interaction and recorded-allergy checks backed by controlled
+  simulated data.
 - Add purchase-order creation and order-status tools with prescription and stock
   validation.
 - Integrate an LLM for natural-language interaction.
