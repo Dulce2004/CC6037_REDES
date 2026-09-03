@@ -1,0 +1,18 @@
+{
+  "servers": [
+    {
+      "name": "pharmacy",
+      "transport": "stdio",
+      "command": "${PYTHON_EXECUTABLE}",
+      "args": ["-B", "-m", "pharmacy_mcp.server.stdio"],
+      "cwd": "..",
+      "env": {
+        "PYTHONPATH": "src",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "request_timeout_seconds": 10,
+      "shutdown_timeout_seconds": 5,
+      "enabled": true
+    }
+  ]
+}
