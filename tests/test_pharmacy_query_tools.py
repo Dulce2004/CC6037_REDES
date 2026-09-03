@@ -76,7 +76,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertEqual(content[0]["type"], "text")
         self.assertIn(message_fragment, content[0]["text"])
 
-    def test_tools_list_publishes_exactly_five_tools_in_workflow_order(self) -> None:
+    def test_tools_list_publishes_exactly_seven_tools_in_workflow_order(self) -> None:
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -90,6 +90,8 @@ class PharmacyQueryToolTests(unittest.TestCase):
                 "get_medication_details",
                 "check_interactions",
                 "check_stock",
+                "create_order",
+                "get_order_status",
             ],
         )
 
@@ -135,6 +137,14 @@ class PharmacyQueryToolTests(unittest.TestCase):
             set(stock_schema["properties"]["branch_id"]["enum"]),
             {"zona-5", "zona-15", "mixco"},
         )
+        create_schema = definitions["create_order"]
+        self.assertEqual(create_schema["required"], ["branch_id", "items"])
+        self.assertEqual(
+            create_schema["properties"]["items"]["items"]["required"],
+            ["sku", "quantity"],
+        )
+        status_schema = definitions["get_order_status"]
+        self.assertEqual(status_schema["required"], ["order_id"])
         self.assertTrue(
             all(
                 schema["additionalProperties"] is False

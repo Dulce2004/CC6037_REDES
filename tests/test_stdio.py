@@ -9,6 +9,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from uuid import uuid4
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
 SOURCE_DIRECTORY = PROJECT_DIRECTORY / "src"
@@ -245,6 +246,11 @@ class StdioTransportTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(SOURCE_DIRECTORY)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        runtime_directory = PROJECT_DIRECTORY / "runtime"
+        runtime_directory.mkdir(exist_ok=True)
+        database_path = runtime_directory / f"test-stdio-{uuid4().hex}.sqlite3"
+        environment["PHARMACY_MCP_DATABASE_PATH"] = str(database_path)
+        self.addCleanup(self._remove_database_files, database_path)
 
         completed = subprocess.run(
             [sys.executable, "-B", "-m", "pharmacy_mcp.server.stdio"],
@@ -262,6 +268,11 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(completed.stderr, "")
         self.assertEqual([response["id"] for response in responses], [1, 2])
+
+    @staticmethod
+    def _remove_database_files(database_path: Path) -> None:
+        for suffix in ("", "-shm", "-wal"):
+            Path(f"{database_path}{suffix}").unlink(missing_ok=True)
 
     def test_stdio_can_call_read_only_stock_tool(self) -> None:
         payload = "".join(
@@ -397,6 +408,66 @@ class StdioTransportTests(unittest.TestCase):
         self.assertFalse(assessment["medication_purchase_recommended"])
         self.assertEqual(interactions["alert_count"], 1)
         self.assertFalse(interactions["exhaustive"])
+
+    def test_stdio_order_updates_stock_in_the_same_server_state(self) -> None:
+        payload = "".join(
+            (
+                json_line(initialize_request()),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "create_order",
+                            "arguments": {
+                                "branch_id": "zona-5",
+                                "items": [
+                                    {"sku": "MED-ANA-001", "quantity": 2}
+                                ],
+                            },
+                        },
+                        "id": 10,
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "check_stock",
+                            "arguments": {
+                                "sku": "MED-ANA-001",
+                                "branch_id": "zona-5",
+                            },
+                        },
+                        "id": 11,
+                    }
+                ),
+            )
+        )
+
+        exit_code, messages, diagnostics, _ = self.run_transport(payload)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(diagnostics, "")
+        self.assertEqual([message["id"] for message in messages], [1, 10, 11])
+        self.assertEqual(
+            messages[1]["result"]["structuredContent"]["order"]["status"],
+            "created",
+        )
+        self.assertEqual(
+            messages[2]["result"]["structuredContent"]["stock"][0][
+                "quantity"
+            ],
+            23,
+        )
 
 
 if __name__ == "__main__":

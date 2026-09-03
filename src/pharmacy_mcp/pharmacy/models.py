@@ -1,4 +1,4 @@
-"""Modelos inmutables para el catálogo simulado de farmacia."""
+"""Modelos inmutables para el catálogo y las órdenes simuladas."""
 
 from __future__ import annotations
 
@@ -125,3 +125,77 @@ class InventoryRecord:
             raise ValueError("'quantity' must be an integer.")
         if self.quantity < 0:
             raise ValueError("'quantity' must be greater than or equal to zero.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderItemRequest:
+    """Artículo solicitado antes de reservar existencias."""
+
+    sku: str
+    quantity: int
+
+    def __post_init__(self) -> None:
+        _validate_text(self.sku, "sku")
+        if not _SKU_FORMAT.fullmatch(self.sku):
+            raise ValueError("'sku' must use uppercase letters, numbers, and hyphens.")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, int):
+            raise ValueError("'quantity' must be an integer.")
+        if self.quantity <= 0:
+            raise ValueError("'quantity' must be positive.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderLine:
+    """Línea inmutable de una orden con el precio capturado al crearla."""
+
+    sku: str
+    quantity: int
+    unit_price_centavos: int
+
+    def __post_init__(self) -> None:
+        OrderItemRequest(sku=self.sku, quantity=self.quantity)
+        if isinstance(self.unit_price_centavos, bool) or not isinstance(
+            self.unit_price_centavos, int
+        ):
+            raise ValueError("'unit_price_centavos' must be an integer.")
+        if self.unit_price_centavos <= 0:
+            raise ValueError("'unit_price_centavos' must be positive.")
+
+    @property
+    def line_total_centavos(self) -> int:
+        return self.quantity * self.unit_price_centavos
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderRecord:
+    """Instantánea persistida de una orden académica."""
+
+    order_id: str
+    branch_id: str
+    status: str
+    items: tuple[OrderLine, ...]
+    prescription_required: bool
+    prescription_provided: bool
+    created_at: str
+
+    def __post_init__(self) -> None:
+        _validate_text(self.order_id, "order_id")
+        _validate_text(self.branch_id, "branch_id")
+        _validate_text(self.status, "status")
+        _validate_text(self.created_at, "created_at")
+        if not isinstance(self.items, tuple) or not self.items:
+            raise ValueError("'items' must be a non-empty tuple.")
+        if not all(isinstance(item, OrderLine) for item in self.items):
+            raise ValueError("'items' must contain only OrderLine instances.")
+        if not isinstance(self.prescription_required, bool):
+            raise ValueError("'prescription_required' must be a boolean.")
+        if not isinstance(self.prescription_provided, bool):
+            raise ValueError("'prescription_provided' must be a boolean.")
+        if self.prescription_required and not self.prescription_provided:
+            raise ValueError(
+                "A prescription-required order must record a prescription."
+            )
+
+    @property
+    def total_centavos(self) -> int:
+        return sum(item.line_total_centavos for item in self.items)

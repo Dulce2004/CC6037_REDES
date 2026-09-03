@@ -46,6 +46,12 @@ $env:PYTHONPATH = "src"
 python -m pharmacy_mcp.server.stdio
 ```
 
+The process persists simulated orders and stock in
+`runtime/pharmacy.sqlite3`. For a fresh isolated demonstration, set
+`PHARMACY_MCP_DATABASE_PATH` to a new file name inside `runtime/` before
+starting the process. The directory is ignored by Git, and the source catalog
+and inventory JSON files are never modified.
+
 The process waits silently for input. Type or paste each request below as one
 physical line and press Enter. Do not paste the formatted multi-line examples
 from the technical specification into stdin: this transport uses one complete
@@ -89,10 +95,10 @@ Input:
 {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
 ```
 
-The response with ID `2` contains five definitions in this order:
+The response with ID `2` contains seven definitions in this order:
 
 ```json
-["assess_symptoms","search_medications","get_medication_details","check_interactions","check_stock"]
+["assess_symptoms","search_medications","get_medication_details","check_interactions","check_stock","create_order","get_order_status"]
 ```
 
 Each definition includes `name`, `description`, and `inputSchema`. The exact
@@ -202,28 +208,64 @@ three branches:
 ]
 ```
 
-For one branch only, send `"branch_id":"zona-5"` with the SKU. This tool is
-read-only and never decrements inventory.
+For one branch only, send `"branch_id":"zona-5"` with the SKU. This tool does
+not mutate stock itself, but it reads the same SQLite state changed by an order.
 
-## Step 9: observe a controlled lookup error
+## Step 9: create an atomic simulated order
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-10"}},"id":8}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_order","arguments":{"branch_id":"zona-5","items":[{"sku":"MED-ANA-001","quantity":2}]}},"id":8}
+```
+
+The result has status `created`, total `GTQ 37.90`, and a generated `ORD-...`
+identifier. Copy that identifier for the next step. The quantity is committed
+only if every order line can be fulfilled.
+
+For a prescription-only catalog item such as `MED-RX-001`, include a simulated
+reference such as `"prescription_id":"RX-DEMO-001"`. Only the `RX-...` format
+is checked; this is not real prescription validation or purchase authorization.
+
+## Step 10: retrieve the simulated order
+
+Replace `ORD-COPIED-FROM-STEP-9` with the exact generated identifier:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_order_status","arguments":{"order_id":"ORD-COPIED-FROM-STEP-9"}},"id":9}
+```
+
+The result repeats the immutable item, price, prescription-scope, timestamp, and
+current `created` status fields. It never returns the prescription identifier.
+
+## Step 11: observe the committed stock
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-5"}},"id":10}
+```
+
+On a fresh database, the returned quantity is now `23`, proving that
+`check_stock` and `create_order` share one state.
+
+## Step 12: observe a controlled lookup error
+
+Input:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-10"}},"id":11}
 ```
 
 Expected stdout response:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":8}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":11}
 ```
 
-The response preserves request ID `8` and is successful at the JSON-RPC layer.
+The response preserves request ID `11` and is successful at the JSON-RPC layer.
 The `isError: true` member reports that the well-formed tool execution could not
 complete its domain lookup.
 
-## Step 10: terminate with EOF
+## Step 13: terminate with EOF
 
 Close the server's stdin:
 
@@ -236,8 +278,8 @@ implemented clean-termination mechanism.
 
 ## Optional: run the complete exchange non-interactively
 
-The following Bash command sends the lifecycle and all five read-only tools,
-then closes the pipe to produce EOF:
+The following Bash command sends the lifecycle, the five consultation tools,
+creates one OTC order, observes the changed stock, and then produces EOF:
 
 ```bash
 printf '%s\n' \
@@ -249,10 +291,12 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":5}' \
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANT-001","current_medications":[],"allergies":[]}},"id":6}' \
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":7}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_order","arguments":{"branch_id":"mixco","items":[{"sku":"MED-ANT-001","quantity":1}]}},"id":8}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":9}' \
   | PYTHONPATH=src python -m pharmacy_mcp.server.stdio
 ```
 
-There should be seven response lines: initialization, tool listing, and five
+There should be nine response lines: initialization, tool listing, and seven
 tool results. The initialized notification deliberately has no response.
 
 PowerShell equivalent:
@@ -268,6 +312,8 @@ $env:PYTHONPATH = "src"
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":5}'
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANT-001","current_medications":[],"allergies":[]}},"id":6}'
   '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":7}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_order","arguments":{"branch_id":"mixco","items":[{"sku":"MED-ANT-001","quantity":1}]}},"id":8}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":9}'
 ) | python -m pharmacy_mcp.server.stdio
 ```
 

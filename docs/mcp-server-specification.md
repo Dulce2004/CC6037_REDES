@@ -12,9 +12,9 @@ server dispatches MCP methods, and a small stdio adapter connects that server to
 a client process.
 
 The implementation is not a complete MCP server. The only advertised server
-primitive is tools. Five tools are registered: `assess_symptoms`,
+primitive is tools. Seven tools are registered: `assess_symptoms`,
 `search_medications`, `get_medication_details`, `check_interactions`, and
-`check_stock`.
+`check_stock`, `create_order`, and `get_order_status`.
 
 ### Server identity and capabilities
 
@@ -24,7 +24,7 @@ primitive is tools. Five tools are registered: `assess_symptoms`,
 | Server name | `Pharmacy MCP Server` |
 | Server version | `0.1.0` |
 | Server capability | `{"tools":{"listChanged":false}}` |
-| Registered tools | `assess_symptoms`, `search_medications`, `get_medication_details`, `check_interactions`, `check_stock` |
+| Registered tools | `assess_symptoms`, `search_medications`, `get_medication_details`, `check_interactions`, `check_stock`, `create_order`, `get_order_status` |
 | External dependencies | None |
 | MCP SDK | None |
 
@@ -68,7 +68,11 @@ protocol message must not be pretty-printed across physical lines. Blank lines
 are not ignored; they produce a JSON-RPC parse error.
 
 One `PharmacyMCPServer` instance serves the complete lifetime of the process, so
-its lifecycle state is preserved between input lines.
+its lifecycle state and SQLite-backed inventory/order store are preserved
+between input lines. The stdio entry point explicitly initializes
+`runtime/pharmacy.sqlite3`; `PHARMACY_MCP_DATABASE_PATH` can select a different
+file. A new database is seeded from the validated catalog and inventory JSON,
+which remain unchanged.
 
 ### Transport-level limitations
 
@@ -341,7 +345,7 @@ Response, formatted for readability:
       },
       {
         "name": "check_stock",
-        "description": "Checks read-only inventory for one medication SKU at one or all branches.",
+        "description": "Checks current inventory for one medication SKU at one or all branches.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -356,6 +360,61 @@ Response, formatted for readability:
             }
           },
           "required": ["sku"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "create_order",
+        "description": "Creates a simulated pharmacy order with atomic branch-stock reservation and format-only academic prescription validation.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "branch_id": {
+              "type": "string",
+              "enum": ["mixco", "zona-15", "zona-5"]
+            },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sku": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+                  },
+                  "quantity": {"type": "integer", "minimum": 1}
+                },
+                "required": ["sku", "quantity"],
+                "additionalProperties": false
+              }
+            },
+            "prescription_id": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 64,
+              "pattern": "^RX-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          },
+          "required": ["branch_id", "items"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "get_order_status",
+        "description": "Returns the current status and immutable details of a simulated order.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "order_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^ORD-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            }
+          },
+          "required": ["order_id"],
           "additionalProperties": false
         }
       }
@@ -379,11 +438,12 @@ The server checks the tool schema's `required` list before invoking the handler.
 An unknown tool, invalid `arguments`, or missing required argument returns
 `-32602`.
 
-For the pharmacy query tools, that protocol error is limited to malformed
+For the pharmacy tools, that protocol error is limited to malformed
 calls, such as missing or additional fields, wrong JSON types, empty strings,
 or invalid identifier syntax. A well-formed call that reaches the domain layer
-but cannot find a medication or branch is a successful JSON-RPC response whose
-tool result contains `isError: true`.
+but cannot find a medication, branch, stock reservation, required prescription
+reference, or order is a successful JSON-RPC response whose tool result contains
+`isError: true`.
 
 Request line:
 
@@ -732,7 +792,7 @@ only the controlled academic dataset and are not clinical conclusions.
 
 ### `check_stock`
 
-**Published description:** `Checks read-only inventory for one medication SKU at
+**Published description:** `Checks current inventory for one medication SKU at
 one or all branches.`
 
 **Exact published `inputSchema`:**
@@ -771,8 +831,8 @@ one or all branches.`
 - `available` is true exactly when `quantity` is greater than zero.
 - Unknown branches and SKUs reported by `InventoryLookupError` produce a
   successful JSON-RPC response with `isError: true` in the tool result.
-- The tool never changes inventory. Repeated calls return the same controlled
-  data.
+- The tool itself never changes inventory. It reads the same SQLite rows updated
+  atomically by `create_order`, so a successful order is immediately visible.
 - Unexpected arguments are rejected with `-32602`.
 
 #### Result structure
@@ -782,7 +842,7 @@ one or all branches.`
   "content": [
     {
       "type": "text",
-      "text": "Stock for MED-ANA-001 - Acetaminofén 500 mg: Zona 5 (zona-5): 25. Simulated read-only inventory."
+      "text": "Stock for MED-ANA-001 - Acetaminofén 500 mg: Zona 5 (zona-5): 25. Simulated transactional inventory."
     }
   ],
   "structuredContent": {
@@ -817,6 +877,143 @@ Omit `branch_id` to receive the same SKU's inventory in every branch.
 ```json
 {"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":10}
 ```
+
+### `create_order`
+
+This tool accepts a branch, one to fifty unique medication lines, and an
+optional simulated prescription reference:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "branch_id": {
+      "type": "string",
+      "enum": ["mixco", "zona-15", "zona-5"]
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+          },
+          "quantity": {"type": "integer", "minimum": 1}
+        },
+        "required": ["sku", "quantity"],
+        "additionalProperties": false
+      }
+    },
+    "prescription_id": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 64,
+      "pattern": "^RX-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+    }
+  },
+  "required": ["branch_id", "items"],
+  "additionalProperties": false
+}
+```
+
+- Quantities must be positive JSON integers; booleans are explicitly rejected.
+- Repeated SKUs, malformed nested objects, additional fields, and malformed
+  identifiers return JSON-RPC `-32602`.
+- A syntactically valid unknown branch/SKU, insufficient stock, or missing
+  prescription for a prescription-only catalog item returns a successful
+  JSON-RPC response whose tool result has `isError: true`.
+- A supplied prescription reference is normalized to uppercase and must use the
+  simulated `RX-...` format. This checks format only; it does not authenticate a
+  prescription, patient, prescriber, medication, quantity, or validity period.
+- SQLite `BEGIN IMMEDIATE`, guarded stock updates, foreign keys, and `CHECK`
+  constraints make every multi-item order all-or-nothing and prevent stock from
+  becoming negative. Concurrent writers cannot reserve the same units.
+- The generated `ORD-...` ID, order rows, item rows, and every stock decrement
+  commit in one transaction. Any failure rolls everything back.
+- Unit, line, and order prices use integer centavos internally and decimal
+  strings in JSON; no floating-point money is used.
+
+Example call:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_order","arguments":{"branch_id":"zona-5","items":[{"sku":"MED-ANA-001","quantity":2}]}} ,"id":11}
+```
+
+Relevant structured result:
+
+```json
+{
+  "order": {
+    "order_id": "ORD-EXAMPLE",
+    "status": "created",
+    "branch_id": "zona-5",
+    "branch_name": "Zona 5",
+    "items": [
+      {
+        "sku": "MED-ANA-001",
+        "medication_name": "Acetaminofén 500 mg",
+        "quantity": 2,
+        "unit_price": {"amount": "18.95", "currency": "GTQ"},
+        "line_total": {"amount": "37.90", "currency": "GTQ"}
+      }
+    ],
+    "total": {"amount": "37.90", "currency": "GTQ"},
+    "prescription_required": false,
+    "prescription_reference_provided": false,
+    "prescription_validation_scope": "format_only_simulation",
+    "created_at": "2026-09-02T12:00:00Z",
+    "simulated": true
+  }
+}
+```
+
+Every success and tool-level failure states that the order and prescription
+validation are academic simulations, not a real purchase or medication-safety
+guarantee. The prescription identifier itself is not returned.
+
+### `get_order_status`
+
+This tool retrieves the persisted immutable snapshot of an order:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "order_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^ORD-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+    }
+  },
+  "required": ["order_id"],
+  "additionalProperties": false
+}
+```
+
+A malformed ID returns `-32602`. A well-formed but unknown ID returns a
+successful JSON-RPC response with `isError: true`. A known order returns the
+same structured order fields as `create_order`, including the current `created`
+status, captured prices, prescription flags, timestamp, and disclaimer.
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_order_status","arguments":{"order_id":"ORD-EXAMPLE"}},"id":12}
+```
+
+### SQLite initialization and persistence
+
+Importing the package or constructing `SQLitePharmacyStore` does not create a
+database. The server explicitly calls `initialize` after validating the catalog
+and all 30 JSON inventory records. A new database is seeded once; later opens
+validate catalog compatibility and preserve stock and orders. The JSON source
+files are never modified. The runtime path defaults to
+`runtime/pharmacy.sqlite3`, is ignored by Git, and can be overridden with
+`PHARMACY_MCP_DATABASE_PATH`. Tests use isolated in-memory or unique temporary
+database files.
 
 ## Errors
 
@@ -853,8 +1050,9 @@ on stderr and cause process exit code `1`.
 - The local stdio transport has no authentication or authorization layer. Access
   is controlled only by the operating-system process relationship and the
   permissions of the user launching the server.
-- The implementation does not contact an LLM, external API, database, or remote
-  service and does not require credentials.
+- The implementation does not contact an LLM, external API, external database,
+  or remote service and does not require credentials. SQLite stores only local
+  simulated inventory and orders.
 
 ## Compatibility and limitations
 
@@ -870,23 +1068,19 @@ on stderr and cause process exit code `1`.
 - The tool list is static, `listChanged` is false, and tool-list change
   notifications are not emitted.
 - `tools/list` does not implement pagination.
-- Malformed tool calls return JSON-RPC `-32602` errors. Well-formed medication
-  or branch lookups that fail in the domain repositories return successful
-  JSON-RPC responses whose tool result has `isError: true`.
+- Malformed tool calls return JSON-RPC `-32602` errors. Well-formed medication,
+  branch, stock, prescription-required, or order lookups that fail in the domain
+  repositories return successful JSON-RPC responses whose tool result has
+  `isError: true`.
 - Runtime validation covers the checks documented above but is not a complete
   JSON Schema validator.
 - JSON-RPC batches and multi-line JSON messages are unsupported.
 - Natural-language assessment uses only controlled phrase matching; there is no
   LLM interpretation, HTTP endpoint, remote server, or network authentication.
-- All five tools are read-only. No tool changes inventory or creates an order.
-
-## Planned tools
-
-The following names describe future pharmacy workflow goals only. They are not
-registered or callable in the current server:
-
-- `create_order`
-- `get_order_status`
+- Orders currently have only the `created` status. Payment, fulfillment,
+  cancellation, delivery, and inventory restoration are not implemented.
+- Prescription references receive format-only simulated validation and must
+  never be interpreted as verified real prescriptions.
 
 ## References
 

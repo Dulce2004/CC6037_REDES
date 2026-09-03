@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum, auto
+from pathlib import Path
 from typing import TypeAlias
 
 from pharmacy_mcp.jsonrpc import (
@@ -24,6 +25,7 @@ from pharmacy_mcp.pharmacy import (
     load_default_catalog,
     load_default_interactions,
     load_default_inventory,
+    SQLitePharmacyStore,
 )
 
 from .catalog_tools import (
@@ -42,6 +44,15 @@ from .catalog_tools import (
     PharmacyQueryHandlers,
 )
 from .handlers import Tool, ToolHandler
+from .order_tools import (
+    CREATE_ORDER_DESCRIPTION,
+    CREATE_ORDER_INPUT_SCHEMA,
+    CREATE_ORDER_NAME,
+    GET_ORDER_STATUS_DESCRIPTION,
+    GET_ORDER_STATUS_INPUT_SCHEMA,
+    GET_ORDER_STATUS_NAME,
+    PharmacyOrderHandlers,
+)
 from .pharmacy_tool import (
     ASSESS_SYMPTOMS_DESCRIPTION,
     ASSESS_SYMPTOMS_INPUT_SCHEMA,
@@ -74,6 +85,7 @@ class PharmacyMCPServer:
         name: str = SERVER_NAME,
         version: str = SERVER_VERSION,
         protocol_version: str = SUPPORTED_PROTOCOL_VERSION,
+        database_path: str | Path | None = None,
     ) -> None:
         self.name = name
         self.version = version
@@ -93,8 +105,16 @@ class PharmacyMCPServer:
             handler=assess_symptoms_handler,
         )
         catalog = load_default_catalog()
-        inventory = load_default_inventory(catalog)
+        initial_inventory = load_default_inventory(catalog)
         interactions = load_default_interactions(catalog)
+        selected_database_path = (
+            ":memory:" if database_path is None else Path(database_path)
+        )
+        inventory = SQLitePharmacyStore(
+            database_path=selected_database_path,
+            catalog=catalog,
+        )
+        inventory.initialize(initial_inventory)
         query_handlers = PharmacyQueryHandlers(
             catalog=catalog,
             inventory=inventory,
@@ -123,6 +143,19 @@ class PharmacyMCPServer:
             description=CHECK_STOCK_DESCRIPTION,
             input_schema=CHECK_STOCK_INPUT_SCHEMA,
             handler=query_handlers.check_stock,
+        )
+        order_handlers = PharmacyOrderHandlers(catalog=catalog, store=inventory)
+        self.register_tool(
+            name=CREATE_ORDER_NAME,
+            description=CREATE_ORDER_DESCRIPTION,
+            input_schema=CREATE_ORDER_INPUT_SCHEMA,
+            handler=order_handlers.create_order,
+        )
+        self.register_tool(
+            name=GET_ORDER_STATUS_NAME,
+            description=GET_ORDER_STATUS_DESCRIPTION,
+            input_schema=GET_ORDER_STATUS_INPUT_SCHEMA,
+            handler=order_handlers.get_order_status,
         )
 
     def register_tool(

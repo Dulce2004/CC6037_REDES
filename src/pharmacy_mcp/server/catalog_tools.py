@@ -15,9 +15,9 @@ from pharmacy_mcp.pharmacy import (
     InteractionQueryError,
     InteractionRepository,
     InventoryLookupError,
-    InventoryRepository,
     Medication,
     PharmacyCatalog,
+    SQLitePharmacyStore,
 )
 
 from .handlers import ToolArguments
@@ -91,7 +91,7 @@ CHECK_INTERACTIONS_INPUT_SCHEMA: dict[str, JsonValue] = {
 
 CHECK_STOCK_NAME = "check_stock"
 CHECK_STOCK_DESCRIPTION = (
-    "Checks read-only inventory for one medication SKU at one or all branches."
+    "Checks current inventory for one medication SKU at one or all branches."
 )
 CHECK_STOCK_INPUT_SCHEMA: dict[str, JsonValue] = {
     "type": "object",
@@ -115,17 +115,17 @@ _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PharmacyQueryHandlers:
-    """Handlers enlazados a repositorios de dominio validados y de solo lectura."""
+    """Handlers enlazados a repositorios de dominio validados."""
 
     catalog: PharmacyCatalog
-    inventory: InventoryRepository
+    inventory: SQLitePharmacyStore
     interactions: InteractionRepository
 
     def __post_init__(self) -> None:
         if not isinstance(self.catalog, PharmacyCatalog):
             raise TypeError("'catalog' must be a PharmacyCatalog instance.")
-        if not isinstance(self.inventory, InventoryRepository):
-            raise TypeError("'inventory' must be an InventoryRepository instance.")
+        if not isinstance(self.inventory, SQLitePharmacyStore):
+            raise TypeError("'inventory' must be a SQLitePharmacyStore instance.")
         if not isinstance(self.interactions, InteractionRepository):
             raise TypeError(
                 "'interactions' must be an InteractionRepository instance."
@@ -298,7 +298,7 @@ class PharmacyQueryHandlers:
         )
         text = (
             f"Stock for {medication.sku} - {medication.name}: {locations}. "
-            "Simulated read-only inventory."
+            "Simulated transactional inventory."
         )
         return _tool_result(
             text,

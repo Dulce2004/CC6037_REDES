@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 from typing import TextIO
 
 from pharmacy_mcp.jsonrpc import (
@@ -16,6 +18,9 @@ from pharmacy_mcp.jsonrpc import (
 )
 
 from .server import PharmacyMCPServer, ServerResult
+
+DATABASE_PATH_ENVIRONMENT_VARIABLE = "PHARMACY_MCP_DATABASE_PATH"
+DEFAULT_RUNTIME_DATABASE_PATH = Path("runtime") / "pharmacy.sqlite3"
 
 
 def process_line(server: PharmacyMCPServer, line: str) -> ServerResult:
@@ -85,7 +90,19 @@ def main() -> int:
     """Run the pharmacy MCP server over the current process stdio streams."""
 
     _configure_standard_streams()
-    return serve_stdio()
+    server = PharmacyMCPServer(database_path=_runtime_database_path())
+    return serve_stdio(server=server)
+
+
+def _runtime_database_path() -> Path:
+    configured_path = os.environ.get(DATABASE_PATH_ENVIRONMENT_VARIABLE)
+    if configured_path is not None:
+        if not configured_path.strip():
+            raise ValueError(
+                f"{DATABASE_PATH_ENVIRONMENT_VARIABLE} must not be empty."
+            )
+        return Path(configured_path)
+    return Path.cwd() / DEFAULT_RUNTIME_DATABASE_PATH
 
 
 if __name__ == "__main__":

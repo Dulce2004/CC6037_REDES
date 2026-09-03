@@ -26,17 +26,19 @@ The implemented MCP subset supports:
 - The `UNINITIALIZED`, `INITIALIZING`, and `READY` lifecycle states.
 - `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - A tools capability with `listChanged: false`.
-- Five registered MCP tools: `assess_symptoms`, `search_medications`,
-  `get_medication_details`, `check_interactions`, and `check_stock`.
+- Seven registered MCP tools: `assess_symptoms`, `search_medications`,
+  `get_medication_details`, `check_interactions`, `check_stock`,
+  `create_order`, and `get_order_status`.
 - A manual stdio transport using UTF-8 NDJSON framing: one JSON object per line.
 - JSON-RPC responses and standard error objects with request-ID correlation.
 - Notifications that never produce a JSON-RPC response.
 - Graceful process termination when stdin reaches EOF.
 
 The pharmacy tools reuse the validated medication catalog, controlled simulated
-interaction rules, and read-only inventory for Zona 5, Zona 15, and Mixco.
-Search covers medication names, aliases, active ingredients, therapeutic
-categories, and SKUs. Inventory queries never modify stock.
+interaction rules, and one transactional inventory for Zona 5, Zona 15, and
+Mixco. Search covers medication names, aliases, active ingredients, therapeutic
+categories, and SKUs. Successful simulated orders atomically reserve stock in
+SQLite; subsequent stock calls read that same state.
 
 ## Implemented features
 
@@ -48,14 +50,16 @@ categories, and SKUs. Inventory queries never modify stock.
   optional age and duration context, severity, and urgent red flags. The prior
   identifier classifier remains an internal rule engine and is no longer a
   public MCP tool.
-- Read-only medication search, complete catalog details, and branch inventory
-  queries with structured results.
+- Read-only medication search, complete catalog details, and current branch
+  inventory queries with structured results.
 - Non-exhaustive medication-interaction and recorded-allergy checks backed by a
   validated simulated dataset.
+- Persistent simulated orders, exact centavo totals, format-only academic
+  prescription references, and atomic all-or-nothing stock updates.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
-- Unit, integration, lifecycle, catalog, inventory, and subprocess transport
-  tests.
+- Unit, integration, lifecycle, catalog, transactional order, concurrency, and
+  subprocess transport tests.
 
 ## Architecture
 
@@ -67,7 +71,8 @@ MCP client process
   -> stateful local MCP server
   -> method dispatcher / tool registry
   -> pharmacy tool adapters
-  -> deterministic assessment / catalog / interactions / inventory domain
+  -> deterministic assessment / catalog / interactions / order domain
+  -> SQLite transaction shared by stock checks and orders
   -> JSON-RPC Response or ErrorResponse
   -> stdout: one UTF-8 JSON-RPC object plus LF
 ```
@@ -75,6 +80,14 @@ MCP client process
 The stdio loop owns one `PharmacyMCPServer` instance, so lifecycle state is
 preserved across input lines until EOF. Protocol output is reserved for stdout;
 unexpected transport diagnostics go to stderr.
+
+The stdio entry point initializes `runtime/pharmacy.sqlite3` explicitly. That
+runtime directory is ignored by Git. Set `PHARMACY_MCP_DATABASE_PATH` to use a
+different database file. A new database is seeded from the validated catalog and
+inventory JSON files; reopening it preserves orders and remaining stock without
+changing those source files. Directly constructed in-memory servers use an
+isolated SQLite database, and persistence/concurrency tests use unique database
+files.
 
 ## Repository structure
 
@@ -173,9 +186,10 @@ through a complete manual handshake and tool call.
 - Messages are processed sequentially by one server instance; there is no
   concurrent request execution.
 - NDJSON batches and multi-line JSON documents are not supported.
-- Five read-only tools are registered; purchase ordering is not yet implemented.
-- Catalog and inventory access is read-only; there are no stock mutations or
-  purchase operations.
+- Orders have only the initial `created` status; payment, fulfillment,
+  cancellation, delivery, and stock restoration are not implemented.
+- Prescription validation is deliberately limited to the simulated `RX-...`
+  identifier format. It does not validate a real prescription or authorize use.
 - The published input schema is descriptive, while runtime validation is manual
   rather than a complete JSON Schema implementation.
 - Prompts, resources, pagination, cancellation, progress, logging messages,
@@ -193,8 +207,8 @@ through a complete manual handshake and tool call.
 
 The following items are planned possibilities, not implemented functionality:
 
-- Add purchase-order creation and order-status tools with prescription and stock
-  validation.
+- Add later fulfillment and cancellation transitions if the course scope
+  requires them.
 - Integrate an LLM for natural-language interaction.
 - Add Streamable HTTP and a remote-server deployment.
 - Explore separate Git and Filesystem MCP servers.
