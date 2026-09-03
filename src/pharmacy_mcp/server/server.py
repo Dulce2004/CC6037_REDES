@@ -20,9 +20,16 @@ from pharmacy_mcp.jsonrpc import (
     ServerNotInitializedError,
 )
 from pharmacy_mcp.jsonrpc.messages import JsonRpcId, JsonValue
-from pharmacy_mcp.pharmacy import load_default_catalog, load_default_inventory
+from pharmacy_mcp.pharmacy import (
+    load_default_catalog,
+    load_default_interactions,
+    load_default_inventory,
+)
 
 from .catalog_tools import (
+    CHECK_INTERACTIONS_DESCRIPTION,
+    CHECK_INTERACTIONS_INPUT_SCHEMA,
+    CHECK_INTERACTIONS_NAME,
     CHECK_STOCK_DESCRIPTION,
     CHECK_STOCK_INPUT_SCHEMA,
     CHECK_STOCK_NAME,
@@ -36,10 +43,10 @@ from .catalog_tools import (
 )
 from .handlers import Tool, ToolHandler
 from .pharmacy_tool import (
-    CLASSIFY_SYMPTOMS_DESCRIPTION,
-    CLASSIFY_SYMPTOMS_INPUT_SCHEMA,
-    CLASSIFY_SYMPTOMS_NAME,
-    classify_symptoms_handler,
+    ASSESS_SYMPTOMS_DESCRIPTION,
+    ASSESS_SYMPTOMS_INPUT_SCHEMA,
+    ASSESS_SYMPTOMS_NAME,
+    assess_symptoms_handler,
 )
 
 SUPPORTED_PROTOCOL_VERSION = "2025-11-25"
@@ -80,16 +87,18 @@ class PharmacyMCPServer:
             "tools/call": self._handle_tools_call,
         }
         self.register_tool(
-            name=CLASSIFY_SYMPTOMS_NAME,
-            description=CLASSIFY_SYMPTOMS_DESCRIPTION,
-            input_schema=CLASSIFY_SYMPTOMS_INPUT_SCHEMA,
-            handler=classify_symptoms_handler,
+            name=ASSESS_SYMPTOMS_NAME,
+            description=ASSESS_SYMPTOMS_DESCRIPTION,
+            input_schema=ASSESS_SYMPTOMS_INPUT_SCHEMA,
+            handler=assess_symptoms_handler,
         )
         catalog = load_default_catalog()
         inventory = load_default_inventory(catalog)
+        interactions = load_default_interactions(catalog)
         query_handlers = PharmacyQueryHandlers(
             catalog=catalog,
             inventory=inventory,
+            interactions=interactions,
         )
         self.register_tool(
             name=SEARCH_MEDICATIONS_NAME,
@@ -102,6 +111,12 @@ class PharmacyMCPServer:
             description=GET_MEDICATION_DETAILS_DESCRIPTION,
             input_schema=GET_MEDICATION_DETAILS_INPUT_SCHEMA,
             handler=query_handlers.get_medication_details,
+        )
+        self.register_tool(
+            name=CHECK_INTERACTIONS_NAME,
+            description=CHECK_INTERACTIONS_DESCRIPTION,
+            input_schema=CHECK_INTERACTIONS_INPUT_SCHEMA,
+            handler=query_handlers.check_interactions,
         )
         self.register_tool(
             name=CHECK_STOCK_NAME,

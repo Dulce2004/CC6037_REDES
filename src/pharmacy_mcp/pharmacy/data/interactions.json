@@ -1,0 +1,51 @@
+{
+  "medication_interactions": [
+    {
+      "skus": ["MED-ANA-002", "MED-GAS-001"],
+      "severity": "moderate",
+      "message": "A controlled academic rule flags this medication pair for professional review; it does not establish a clinical interaction."
+    }
+  ],
+  "allergy_rules": [
+    {
+      "sku": "MED-ANA-001",
+      "terms": ["acetaminofen", "paracetamol"]
+    },
+    {
+      "sku": "MED-ANA-002",
+      "terms": ["ibuprofeno", "ibuprofen", "aine", "aines", "antiinflamatorio no esteroideo"]
+    },
+    {
+      "sku": "MED-ANT-001",
+      "terms": ["loratadina", "loratadine"]
+    },
+    {
+      "sku": "MED-ANT-002",
+      "terms": ["cetirizina", "cetirizine"]
+    },
+    {
+      "sku": "MED-GAS-001",
+      "terms": ["subsalicilato de bismuto", "bismuto", "salicilato", "salicilatos"]
+    },
+    {
+      "sku": "MED-GAS-002",
+      "terms": ["sales de rehidratacion oral", "cloruro de sodio"]
+    },
+    {
+      "sku": "MED-RES-001",
+      "terms": ["dextrometorfano", "dextromethorphan"]
+    },
+    {
+      "sku": "MED-RES-002",
+      "terms": ["solucion salina nasal", "cloruro de sodio"]
+    },
+    {
+      "sku": "MED-RX-001",
+      "terms": ["amoxicilina", "amoxicillin", "penicilina", "penicilinas", "betalactamico", "betalactamicos"]
+    },
+    {
+      "sku": "MED-RX-002",
+      "terms": ["azitromicina", "azithromycin", "macrolido", "macrolidos"]
+    }
+  ]
+}

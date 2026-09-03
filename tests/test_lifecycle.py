@@ -213,7 +213,7 @@ class LifecycleTests(unittest.TestCase):
         response = self.server.process_request(
             Request(
                 method="tools/call",
-                params={"name": "classify_symptoms", "arguments": {}},
+                params={"name": "assess_symptoms", "arguments": {}},
                 id=1,
             )
         )
@@ -227,7 +227,7 @@ class LifecycleTests(unittest.TestCase):
         response = self.server.process_request(
             Request(
                 method="tools/call",
-                params={"name": "classify_symptoms", "arguments": {}},
+                params={"name": "assess_symptoms", "arguments": {}},
                 id=2,
             )
         )

@@ -15,7 +15,8 @@ tests.
 
 > **Medical disclaimer:** This project is for education and demonstration only.
 > It does not provide a diagnosis, recommend treatment, or replace advice from a
-> qualified healthcare professional.
+> qualified healthcare professional. Its simulated interaction check is not
+> exhaustive and cannot establish that a medication is safe.
 
 ## Current status
 
@@ -25,17 +26,17 @@ The implemented MCP subset supports:
 - The `UNINITIALIZED`, `INITIALIZING`, and `READY` lifecycle states.
 - `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - A tools capability with `listChanged: false`.
-- Four registered MCP tools: `classify_symptoms`, `search_medications`,
-  `get_medication_details`, and `check_stock`.
+- Five registered MCP tools: `assess_symptoms`, `search_medications`,
+  `get_medication_details`, `check_interactions`, and `check_stock`.
 - A manual stdio transport using UTF-8 NDJSON framing: one JSON object per line.
 - JSON-RPC responses and standard error objects with request-ID correlation.
 - Notifications that never produce a JSON-RPC response.
 - Graceful process termination when stdin reaches EOF.
 
-The three query tools reuse the validated medication catalog and simulated,
-read-only inventory for Zona 5, Zona 15, and Mixco. Search covers medication
-names, aliases, active ingredients, therapeutic categories, and SKUs. Inventory
-queries never modify stock.
+The pharmacy tools reuse the validated medication catalog, controlled simulated
+interaction rules, and read-only inventory for Zona 5, Zona 15, and Mixco.
+Search covers medication names, aliases, active ingredients, therapeutic
+categories, and SKUs. Inventory queries never modify stock.
 
 ## Implemented features
 
@@ -43,10 +44,14 @@ queries never modify stock.
   deserialization support.
 - Stateful MCP initialization and readiness enforcement.
 - Tool registration, discovery, argument checks, and invocation.
-- Deterministic classification of controlled symptom identifiers into
-  respiratory, allergy, gastrointestinal, or unclassified results.
+- Deterministic assessment of controlled Spanish or English symptom phrases,
+  optional age and duration context, severity, and urgent red flags. The prior
+  identifier classifier remains an internal rule engine and is no longer a
+  public MCP tool.
 - Read-only medication search, complete catalog details, and branch inventory
   queries with structured results.
+- Non-exhaustive medication-interaction and recorded-allergy checks backed by a
+  validated simulated dataset.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
 - Unit, integration, lifecycle, catalog, inventory, and subprocess transport
@@ -61,8 +66,8 @@ MCP client process
   -> manual JSON-RPC deserializer
   -> stateful local MCP server
   -> method dispatcher / tool registry
-  -> symptom or read-only query tool adapter
-  -> deterministic pharmacy domain / catalog / inventory
+  -> pharmacy tool adapters
+  -> deterministic assessment / catalog / interactions / inventory domain
   -> JSON-RPC Response or ErrorResponse
   -> stdout: one UTF-8 JSON-RPC object plus LF
 ```
@@ -83,7 +88,7 @@ unexpected transport diagnostics go to stderr.
 |   `-- pharmacy_mcp/
 |       |-- client/       # Existing in-memory client and interactive CLI
 |       |-- jsonrpc/      # Manual JSON-RPC messages, errors, and conversion
-|       |-- pharmacy/     # Symptoms, catalog, inventory, models, and data
+|       |-- pharmacy/     # Assessment, catalog, interactions, inventory, and data
 |       `-- server/       # MCP core, tool adapter, and stdio entry point
 |-- tests/                # Unit, integration, lifecycle, and stdio tests
 |-- README.md
@@ -168,8 +173,7 @@ through a complete manual handshake and tool call.
 - Messages are processed sequentially by one server instance; there is no
   concurrent request execution.
 - NDJSON batches and multi-line JSON documents are not supported.
-- Four tools are registered, but interaction checks and ordering are not yet
-  implemented.
+- Five read-only tools are registered; purchase ordering is not yet implemented.
 - Catalog and inventory access is read-only; there are no stock mutations or
   purchase operations.
 - The published input schema is descriptive, while runtime validation is manual
@@ -179,17 +183,16 @@ through a complete manual handshake and tool call.
   are not implemented.
 - There is no authentication because the server is a local child process using
   stdio.
-- There is no LLM integration and no natural-language symptom interpretation.
-- `classify_symptoms` consumes controlled identifiers, and no tool output should
-  be treated as medical advice.
+- Natural-language symptom handling is limited to deterministic controlled
+  phrases; there is no LLM interpretation.
+- Interaction and allergy rules are deliberately small, simulated, and
+  non-exhaustive. No tool output should be treated as medical advice or proof of
+  medication safety.
 
 ## Future work
 
 The following items are planned possibilities, not implemented functionality:
 
-- Evolve `classify_symptoms` into a broader symptom-assessment workflow.
-- Add medication-interaction and recorded-allergy checks backed by controlled
-  simulated data.
 - Add purchase-order creation and order-status tools with prescription and stock
   validation.
 - Integrate an LLM for natural-language interaction.

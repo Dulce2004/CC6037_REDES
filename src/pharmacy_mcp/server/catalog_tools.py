@@ -1,4 +1,4 @@
-"""Adaptadores MCP de solo lectura para catálogo e inventario de farmacia."""
+"""Adaptadores MCP de consultas de catálogo, interacciones e inventario."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from pharmacy_mcp.jsonrpc import InvalidParamsError
 from pharmacy_mcp.jsonrpc.messages import JsonValue
 from pharmacy_mcp.pharmacy import (
     EXPECTED_BRANCH_IDS,
+    INTERACTION_DISCLAIMER,
     CatalogQueryError,
+    InteractionLookupError,
+    InteractionQueryError,
+    InteractionRepository,
     InventoryLookupError,
     InventoryRepository,
     Medication,
@@ -49,6 +53,42 @@ GET_MEDICATION_DETAILS_INPUT_SCHEMA: dict[str, JsonValue] = {
     "additionalProperties": False,
 }
 
+CHECK_INTERACTIONS_NAME = "check_interactions"
+CHECK_INTERACTIONS_DESCRIPTION = (
+    "Checks a requested medication against current medications and allergies "
+    "using controlled, non-exhaustive simulated rules."
+)
+CHECK_INTERACTIONS_INPUT_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "properties": {
+        "medication_sku": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
+        },
+        "current_medications": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
+            },
+            "maxItems": 20,
+            "uniqueItems": True,
+            "default": [],
+        },
+        "allergies": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": 200},
+            "maxItems": 20,
+            "uniqueItems": True,
+            "default": [],
+        },
+    },
+    "required": ["medication_sku"],
+    "additionalProperties": False,
+}
+
 CHECK_STOCK_NAME = "check_stock"
 CHECK_STOCK_DESCRIPTION = (
     "Checks read-only inventory for one medication SKU at one or all branches."
@@ -79,12 +119,17 @@ class PharmacyQueryHandlers:
 
     catalog: PharmacyCatalog
     inventory: InventoryRepository
+    interactions: InteractionRepository
 
     def __post_init__(self) -> None:
         if not isinstance(self.catalog, PharmacyCatalog):
             raise TypeError("'catalog' must be a PharmacyCatalog instance.")
         if not isinstance(self.inventory, InventoryRepository):
             raise TypeError("'inventory' must be an InventoryRepository instance.")
+        if not isinstance(self.interactions, InteractionRepository):
+            raise TypeError(
+                "'interactions' must be an InteractionRepository instance."
+            )
 
     def search_medications(self, arguments: ToolArguments) -> JsonValue:
         _reject_unexpected_arguments(arguments, {"query", "otc_only"})
@@ -137,6 +182,90 @@ class PharmacyQueryHandlers:
             "Simulated catalog data; not medical advice."
         )
         return _tool_result(text, {"medication": details})
+
+    def check_interactions(self, arguments: ToolArguments) -> JsonValue:
+        _reject_unexpected_arguments(
+            arguments,
+            {"medication_sku", "current_medications", "allergies"},
+        )
+        medication_sku = _required_identifier(
+            arguments,
+            "medication_sku",
+        ).upper()
+        current_medications = _optional_identifier_array(
+            arguments,
+            "current_medications",
+        )
+        allergies = _optional_string_array(arguments, "allergies")
+
+        try:
+            alerts = self.interactions.check_interactions(
+                medication_sku,
+                current_medications,
+                allergies,
+            )
+        except InteractionQueryError as exc:
+            raise InvalidParamsError(str(exc)) from exc
+        except InteractionLookupError as exc:
+            return _tool_error(f"{exc} {INTERACTION_DISCLAIMER}")
+
+        medication = self.catalog.get_medication(medication_sku)
+        if medication is None:
+            return _tool_error(
+                f"Unknown medication SKU: '{medication_sku}'. "
+                f"{INTERACTION_DISCLAIMER}"
+            )
+
+        serialized_alerts: list[dict[str, JsonValue]] = []
+        for alert in alerts:
+            serialized = alert.to_dict()
+            related_sku = serialized.get("related_sku")
+            if isinstance(related_sku, str):
+                related_medication = self.catalog.get_medication(related_sku)
+                if related_medication is not None:
+                    serialized["related_medication_name"] = related_medication.name
+            serialized_alerts.append(serialized)
+
+        highest_severity = _highest_interaction_severity(serialized_alerts)
+        if serialized_alerts:
+            summary = (
+                f"Found {len(serialized_alerts)} simulated alert(s); highest "
+                f"severity: {highest_severity}. Obtain professional review "
+                "before using the requested medication."
+            )
+        else:
+            summary = (
+                "No alerts were found in the controlled simulated dataset. "
+                "This does not establish that the medication is safe."
+            )
+        prescription_notice = (
+            " This medication requires a prescription; this tool does not "
+            "recommend or authorize its use."
+            if medication.requires_prescription
+            else ""
+        )
+        text = (
+            f"Interaction check for {medication.sku} - {medication.name}. "
+            f"{summary}{prescription_notice} {INTERACTION_DISCLAIMER}"
+        )
+        return _tool_result(
+            text,
+            {
+                "medication": {
+                    "sku": medication.sku,
+                    "name": medication.name,
+                    "requires_prescription": medication.requires_prescription,
+                },
+                "current_medications": current_medications,
+                "allergies": allergies,
+                "alert_count": len(serialized_alerts),
+                "highest_severity": highest_severity,
+                "alerts": serialized_alerts,
+                "exhaustive": False,
+                "safety_established": False,
+                "disclaimer": INTERACTION_DISCLAIMER,
+            },
+        )
 
     def check_stock(self, arguments: ToolArguments) -> JsonValue:
         _reject_unexpected_arguments(arguments, {"sku", "branch_id"})
@@ -206,6 +335,80 @@ def _required_identifier(arguments: ToolArguments, name: str) -> str:
             f"'{name}' must use letters, digits, and single hyphen separators."
         )
     return value
+
+
+def _optional_identifier_array(
+    arguments: ToolArguments,
+    name: str,
+) -> list[str]:
+    value = arguments.get(name, [])
+    if not isinstance(value, list):
+        raise InvalidParamsError(f"'{name}' must be an array.")
+    if len(value) > 20:
+        raise InvalidParamsError(f"'{name}' must contain at most 20 items.")
+    normalized = [
+        _validate_identifier_value(item, name).upper() for item in value
+    ]
+    if len(set(normalized)) != len(normalized):
+        raise InvalidParamsError(f"'{name}' must not contain duplicate values.")
+    return normalized
+
+
+def _optional_string_array(
+    arguments: ToolArguments,
+    name: str,
+) -> list[str]:
+    value = arguments.get(name, [])
+    if not isinstance(value, list):
+        raise InvalidParamsError(f"'{name}' must be an array.")
+    if len(value) > 20:
+        raise InvalidParamsError(f"'{name}' must contain at most 20 items.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise InvalidParamsError(
+                f"Every item in '{name}' must be a non-empty string."
+            )
+        text = item.strip()
+        if len(text) > 200:
+            raise InvalidParamsError(
+                f"Every item in '{name}' must contain at most 200 characters."
+            )
+        key = text.casefold()
+        if key in seen:
+            raise InvalidParamsError(
+                f"'{name}' must not contain duplicate values."
+            )
+        normalized.append(text)
+        seen.add(key)
+    return normalized
+
+
+def _validate_identifier_value(value: JsonValue, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidParamsError(
+            f"Every item in '{name}' must be a non-empty string."
+        )
+    identifier = value.strip()
+    if _IDENTIFIER_PATTERN.fullmatch(identifier) is None:
+        raise InvalidParamsError(
+            f"Every item in '{name}' must use letters, digits, and single "
+            "hyphen separators."
+        )
+    return identifier
+
+
+def _highest_interaction_severity(
+    alerts: list[dict[str, JsonValue]],
+) -> str:
+    severities = {alert.get("severity") for alert in alerts}
+    if "high" in severities:
+        return "high"
+    if "moderate" in severities:
+        return "moderate"
+    return "none"
 
 
 def _reject_unexpected_arguments(

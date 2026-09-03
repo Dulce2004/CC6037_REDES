@@ -104,7 +104,8 @@ class PharmacyMCPServerTests(unittest.TestCase):
         )
 
         tool_names = [tool["name"] for tool in response.result["tools"]]
-        self.assertIn("classify_symptoms", tool_names)
+        self.assertIn("assess_symptoms", tool_names)
+        self.assertNotIn("classify_symptoms", tool_names)
 
     def test_unknown_tool_returns_invalid_params_error(self) -> None:
         self.make_server_ready()

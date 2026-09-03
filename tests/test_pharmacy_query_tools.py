@@ -76,7 +76,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertEqual(content[0]["type"], "text")
         self.assertIn(message_fragment, content[0]["text"])
 
-    def test_tools_list_publishes_exactly_four_tools_in_workflow_order(self) -> None:
+    def test_tools_list_publishes_exactly_five_tools_in_workflow_order(self) -> None:
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -85,9 +85,10 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertEqual(
             [tool["name"] for tool in response.result["tools"]],
             [
-                "classify_symptoms",
+                "assess_symptoms",
                 "search_medications",
                 "get_medication_details",
+                "check_interactions",
                 "check_stock",
             ],
         )
@@ -101,6 +102,16 @@ class PharmacyQueryToolTests(unittest.TestCase):
             for tool in response.result["tools"]
         }
 
+        assessment_schema = definitions["assess_symptoms"]
+        self.assertEqual(assessment_schema["required"], ["symptoms"])
+        self.assertEqual(
+            assessment_schema["properties"]["symptoms"]["type"],
+            "string",
+        )
+        self.assertEqual(
+            assessment_schema["properties"]["age"]["type"],
+            "integer",
+        )
         search_schema = definitions["search_medications"]
         self.assertEqual(search_schema["required"], ["query"])
         self.assertEqual(
@@ -108,6 +119,16 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
         details_schema = definitions["get_medication_details"]
         self.assertEqual(details_schema["required"], ["sku"])
+        interaction_schema = definitions["check_interactions"]
+        self.assertEqual(interaction_schema["required"], ["medication_sku"])
+        self.assertEqual(
+            interaction_schema["properties"]["current_medications"]["type"],
+            "array",
+        )
+        self.assertEqual(
+            interaction_schema["properties"]["allergies"]["type"],
+            "array",
+        )
         stock_schema = definitions["check_stock"]
         self.assertEqual(stock_schema["required"], ["sku"])
         self.assertEqual(

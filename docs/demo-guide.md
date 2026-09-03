@@ -89,39 +89,57 @@ Input:
 {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
 ```
 
-The response with ID `2` contains four definitions in this order:
+The response with ID `2` contains five definitions in this order:
 
 ```json
-["classify_symptoms","search_medications","get_medication_details","check_stock"]
+["assess_symptoms","search_medications","get_medication_details","check_interactions","check_stock"]
 ```
 
 Each definition includes `name`, `description`, and `inputSchema`. The exact
 schemas are reproduced in the [server specification](mcp-server-specification.md#tools).
 
-## Step 4: search the medication catalog
+## Step 4: assess natural-language symptoms
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"paracetamol","otc_only":true}},"id":3}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"assess_symptoms","arguments":{"symptoms":"Tengo fiebre y dolor de garganta desde ayer","age":24,"duration_days":1}},"id":3}
+```
+
+Inspect `result.structuredContent`. It reports a simulated `mild` assessment,
+the `respiratory` category, the recognized identifiers `fever` and
+`sore_throat`, no urgent red flags, and
+`medication_purchase_recommended: false`. The text result states that this is
+not a diagnosis or medical advice.
+
+For the urgent path, send `"Tengo tos y dificultad para respirar"`. The result
+starts with an urgent-care instruction and explicitly says not to select or
+purchase medication from the assessment.
+
+## Step 5: search the medication catalog
+
+Input:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"paracetamol","otc_only":true}},"id":4}
 ```
 
 Expected stdout response:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Found 1 medication(s): MED-ANA-001 - Acetaminofén 500 mg. Simulated catalog data; not medical advice."}],"structuredContent":{"query":"paracetamol","otc_only":true,"count":1,"medications":[{"sku":"MED-ANA-001","name":"Acetaminofén 500 mg","active_ingredient":"acetaminofén","therapeutic_category":"analgesic_antipyretic","requires_prescription":false,"price":{"amount":"18.95","currency":"GTQ"}}]}},"id":3}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Found 1 medication(s): MED-ANA-001 - Acetaminofén 500 mg. Simulated catalog data; not medical advice."}],"structuredContent":{"query":"paracetamol","otc_only":true,"count":1,"medications":[{"sku":"MED-ANA-001","name":"Acetaminofén 500 mg","active_ingredient":"acetaminofén","therapeutic_category":"analgesic_antipyretic","requires_prescription":false,"price":{"amount":"18.95","currency":"GTQ"}}]}},"id":4}
 ```
 
 The result contains both human-readable `content` and machine-readable
 `structuredContent`. Search is case-insensitive and accent-insensitive, and can
 match names, aliases, active ingredients, therapeutic categories, and SKUs.
 
-## Step 5: retrieve complete medication details
+## Step 6: retrieve complete medication details
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANA-001"}},"id":4}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANA-001"}},"id":5}
 ```
 
 Inspect `result.structuredContent.medication`. It contains exactly these catalog
@@ -147,12 +165,30 @@ fields:
 The price amount is a string, not a floating-point value. The displayed dosage
 and contraindications are simulated catalog information, not medical advice.
 
-## Step 6: check branch inventory
+## Step 7: check simulated interactions and allergies
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001"}},"id":5}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANA-002","current_medications":["MED-GAS-001"],"allergies":["AINEs"]}},"id":6}
+```
+
+The controlled dataset produces two alerts: one simulated medication pair and
+one allergy-term match. Inspect these safety fields:
+
+```json
+{"alert_count":2,"highest_severity":"high","exhaustive":false,"safety_established":false}
+```
+
+The result is not a guarantee of safety. It directs the user to professional
+review and states that the check is simulated and non-exhaustive.
+
+## Step 8: check branch inventory
+
+Input:
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001"}},"id":7}
 ```
 
 Because `branch_id` is omitted, `result.structuredContent.stock` contains all
@@ -169,39 +205,25 @@ three branches:
 For one branch only, send `"branch_id":"zona-5"` with the SKU. This tool is
 read-only and never decrements inventory.
 
-## Step 7: confirm `classify_symptoms` still works
+## Step 9: observe a controlled lookup error
 
 Input:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","cough"]}},"id":6}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-10"}},"id":8}
 ```
 
 Expected stdout response:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Classification: respiratory. Matched symptoms: fever, cough. Symptoms match the respiratory category. Educational use only; not a medical diagnosis."}]},"id":6}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":8}
 ```
 
-## Step 8: observe a controlled lookup error
-
-Input:
-
-```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANA-001","branch_id":"zona-10"}},"id":7}
-```
-
-Expected stdout response:
-
-```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown branch: 'zona-10'."}],"isError":true},"id":7}
-```
-
-The response preserves request ID `7` and is successful at the JSON-RPC layer.
+The response preserves request ID `8` and is successful at the JSON-RPC layer.
 The `isError: true` member reports that the well-formed tool execution could not
 complete its domain lookup.
 
-## Step 9: terminate with EOF
+## Step 10: terminate with EOF
 
 Close the server's stdin:
 
@@ -214,22 +236,24 @@ implemented clean-termination mechanism.
 
 ## Optional: run the complete exchange non-interactively
 
-The following Bash command sends the lifecycle and all three read-only query
-tools, then closes the pipe to produce EOF:
+The following Bash command sends the lifecycle and all five read-only tools,
+then closes the pipe to produce EOF:
 
 ```bash
 printf '%s\n' \
   '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Scripted Demo Client","version":"1.0.0"}},"id":1}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
   '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}' \
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":3}' \
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":4}' \
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":5}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"assess_symptoms","arguments":{"symptoms":"Tengo estornudos y congestión nasal","age":24,"duration_days":1}},"id":3}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":4}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":5}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANT-001","current_medications":[],"allergies":[]}},"id":6}' \
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":7}' \
   | PYTHONPATH=src python -m pharmacy_mcp.server.stdio
 ```
 
-There should be five response lines: initialization, tool listing, and three tool
-results. The initialized notification deliberately has no response.
+There should be seven response lines: initialization, tool listing, and five
+tool results. The initialized notification deliberately has no response.
 
 PowerShell equivalent:
 
@@ -239,9 +263,11 @@ $env:PYTHONPATH = "src"
   '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"Scripted Demo Client","version":"1.0.0"}},"id":1}'
   '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
   '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}'
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":3}'
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":4}'
-  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":5}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"assess_symptoms","arguments":{"symptoms":"Tengo estornudos y congestión nasal","age":24,"duration_days":1}},"id":3}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_medications","arguments":{"query":"loratadina"}},"id":4}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_medication_details","arguments":{"sku":"MED-ANT-001"}},"id":5}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANT-001","current_medications":[],"allergies":[]}},"id":6}'
+  '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_stock","arguments":{"sku":"MED-ANT-001","branch_id":"mixco"}},"id":7}'
 ) | python -m pharmacy_mcp.server.stdio
 ```
 

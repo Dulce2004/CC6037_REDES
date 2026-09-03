@@ -12,7 +12,7 @@ Pharmacy MCP Client
 ========================================
 1. Initialize
 2. List tools
-3. Classify symptoms
+3. Assess symptoms
 4. Exit
 """
 
@@ -34,7 +34,7 @@ def main() -> None:
         elif option == "2":
             _list_tools(client)
         elif option == "3":
-            _classify_symptoms(client)
+            _assess_symptoms(client)
         elif option == "4":
             print("Goodbye.")
             return
@@ -71,15 +71,26 @@ def _list_tools(client: PharmacyMCPClient) -> None:
         print(f"- {tool.get('name')}: {tool.get('description', '')}")
 
 
-def _classify_symptoms(client: PharmacyMCPClient) -> None:
+def _assess_symptoms(client: PharmacyMCPClient) -> None:
     try:
-        raw_symptoms = input("Enter symptoms separated by commas: ")
+        symptoms = input("Describe the symptoms: ").strip()
+        age_text = input("Age in years (optional): ").strip()
+        duration_text = input("Duration in days (optional): ").strip()
     except (EOFError, KeyboardInterrupt):
-        print("\nClassification cancelled.")
+        print("\nAssessment cancelled.")
         return
 
-    symptoms = [value.strip() for value in raw_symptoms.split(",")]
-    result = client.call_tool("classify_symptoms", {"symptoms": symptoms})
+    arguments: dict[str, JsonValue] = {"symptoms": symptoms}
+    try:
+        if age_text:
+            arguments["age"] = int(age_text)
+        if duration_text:
+            arguments["duration_days"] = int(duration_text)
+    except ValueError:
+        print("Age and duration must be whole numbers when supplied.")
+        return
+
+    result = client.call_tool("assess_symptoms", arguments)
     if isinstance(result, ClientError):
         print(result)
         return

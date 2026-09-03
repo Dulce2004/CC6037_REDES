@@ -58,9 +58,9 @@ class PharmacyMCPClientTests(unittest.TestCase):
         response = self.client.initialize()
         self.assertIsInstance(response, Response)
 
-    def classify(self, symptoms: list[str]) -> object:
+    def assess(self, symptoms: object) -> object:
         return self.client.call_tool(
-            "classify_symptoms",
+            "assess_symptoms",
             {"symptoms": symptoms},
         )
 
@@ -81,57 +81,59 @@ class PharmacyMCPClientTests(unittest.TestCase):
         tools = self.client.list_tools()
 
         self.assertNotIsInstance(tools, ClientError)
-        self.assertIn("classify_symptoms", [tool["name"] for tool in tools])
+        names = [tool["name"] for tool in tools]
+        self.assertIn("assess_symptoms", names)
+        self.assertNotIn("classify_symptoms", names)
 
-    def test_client_invokes_classify_symptoms(self) -> None:
+    def test_client_invokes_assess_symptoms(self) -> None:
         self.initialize_client()
 
-        result = self.classify(["fever", "cough"])
+        result = self.assess("Tengo fiebre y tos")
 
         self.assertNotIsInstance(result, ClientError)
-        self.assertIn("Classification:", self.result_text(result))
+        self.assertIn("Severity:", self.result_text(result))
 
-    def test_client_receives_respiratory_classification(self) -> None:
+    def test_client_receives_respiratory_assessment(self) -> None:
         self.initialize_client()
 
-        result = self.classify(["fever", "cough", "sore_throat"])
+        result = self.assess("Tengo fiebre, tos y dolor de garganta")
 
-        self.assertIn("Classification: respiratory", self.result_text(result))
+        self.assertIn("Category: respiratory", self.result_text(result))
 
-    def test_client_receives_allergy_classification(self) -> None:
+    def test_client_receives_allergy_assessment(self) -> None:
         self.initialize_client()
 
-        result = self.classify(
-            ["sneezing", "nasal_congestion", "itchy_eyes"]
+        result = self.assess(
+            "Tengo estornudos, congestión nasal y picazón en los ojos"
         )
 
-        self.assertIn("Classification: allergy", self.result_text(result))
+        self.assertIn("Category: allergy", self.result_text(result))
 
-    def test_client_receives_gastrointestinal_classification(self) -> None:
+    def test_client_receives_gastrointestinal_assessment(self) -> None:
         self.initialize_client()
 
-        result = self.classify(["nausea", "diarrhea", "abdominal_pain"])
+        result = self.assess("Tengo náuseas, diarrea y dolor abdominal")
 
-        self.assertIn("Classification: gastrointestinal", self.result_text(result))
+        self.assertIn("Category: gastrointestinal", self.result_text(result))
 
     def test_client_receives_unclassified_result(self) -> None:
         self.initialize_client()
 
-        result = self.classify(["fever", "itchy_eyes"])
+        result = self.assess("Tengo fiebre y picazón en los ojos")
 
-        self.assertIn("Classification: unclassified", self.result_text(result))
+        self.assertIn("Category: unclassified", self.result_text(result))
 
-    def test_client_handles_unknown_symptom_error(self) -> None:
+    def test_client_handles_invalid_assessment_arguments(self) -> None:
         self.initialize_client()
 
-        result = self.classify(["fever", "magic_symptom"])
+        result = self.assess(["fever"])
 
         self.assertIsInstance(result, ClientError)
         self.assertEqual(result.code, INVALID_PARAMS)
-        self.assertIn("magic_symptom", result.message)
+        self.assertIn("non-empty string", result.message)
 
     def test_tool_cannot_run_before_initialize(self) -> None:
-        result = self.classify(["fever", "cough"])
+        result = self.assess("Tengo fiebre y tos")
 
         self.assertIsInstance(result, ClientError)
         self.assertEqual(result.message, "Client has not been initialized.")
@@ -142,7 +144,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
 
         client.initialize()
         client.list_tools()
-        client.call_tool("classify_symptoms", {"symptoms": ["fever", "cough"]})
+        client.call_tool("assess_symptoms", {"symptoms": "Tengo fiebre y tos"})
 
         self.assertEqual(server.received_ids, [1, None, 2, 3])
 

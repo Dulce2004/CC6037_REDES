@@ -12,8 +12,9 @@ server dispatches MCP methods, and a small stdio adapter connects that server to
 a client process.
 
 The implementation is not a complete MCP server. The only advertised server
-primitive is tools. Four tools are registered: `classify_symptoms`,
-`search_medications`, `get_medication_details`, and `check_stock`.
+primitive is tools. Five tools are registered: `assess_symptoms`,
+`search_medications`, `get_medication_details`, `check_interactions`, and
+`check_stock`.
 
 ### Server identity and capabilities
 
@@ -23,7 +24,7 @@ primitive is tools. Four tools are registered: `classify_symptoms`,
 | Server name | `Pharmacy MCP Server` |
 | Server version | `0.1.0` |
 | Server capability | `{"tools":{"listChanged":false}}` |
-| Registered tools | `classify_symptoms`, `search_medications`, `get_medication_details`, `check_stock` |
+| Registered tools | `assess_symptoms`, `search_medications`, `get_medication_details`, `check_interactions`, `check_stock` |
 | External dependencies | None |
 | MCP SDK | None |
 
@@ -254,28 +255,21 @@ Response, formatted for readability:
   "result": {
     "tools": [
       {
-        "name": "classify_symptoms",
-        "description": "Classifies controlled symptom identifiers into educational categories.",
+        "name": "assess_symptoms",
+        "description": "Assesses natural-language symptoms using controlled simulated rules, including severity and urgent red flags.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "symptoms": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "abdominal_pain",
-                  "cough",
-                  "diarrhea",
-                  "fever",
-                  "itchy_eyes",
-                  "nasal_congestion",
-                  "nausea",
-                  "sneezing",
-                  "sore_throat"
-                ]
-              },
-              "minItems": 1
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "age": {"type": "integer", "minimum": 0, "maximum": 120},
+            "duration_days": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 365
             }
           },
           "required": ["symptoms"],
@@ -308,6 +302,40 @@ Response, formatted for readability:
             }
           },
           "required": ["sku"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "check_interactions",
+        "description": "Checks a requested medication against current medications and allergies using controlled, non-exhaustive simulated rules.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "medication_sku": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+            },
+            "current_medications": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+              },
+              "maxItems": 20,
+              "uniqueItems": true,
+              "default": []
+            },
+            "allergies": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1, "maxLength": 200},
+              "maxItems": 20,
+              "uniqueItems": true,
+              "default": []
+            }
+          },
+          "required": ["medication_sku"],
           "additionalProperties": false
         }
       },
@@ -360,23 +388,23 @@ tool result contains `isError: true`.
 Request line:
 
 ```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"classify_symptoms","arguments":{"symptoms":["fever","cough"]}},"id":3}
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"assess_symptoms","arguments":{"symptoms":"Tengo fiebre y tos","age":24,"duration_days":1}},"id":3}
 ```
 
 Successful response line:
 
 ```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Classification: respiratory. Matched symptoms: fever, cough. Symptoms match the respiratory category. Educational use only; not a medical diagnosis."}]},"id":3}
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Severity: mild. Category: respiratory. Recognized symptoms: fever, cough. Red flags: none. Monitor symptoms and ask a qualified pharmacist for general information; seek medical care if symptoms worsen or persist. No medication purchase is recommended by this result. Academic simulated assessment; not a diagnosis, medical advice, or substitute for a qualified healthcare professional."}],"structuredContent":{"severity":"mild","category":"respiratory","recognized_symptoms":["fever","cough"],"matched_symptoms":["fever","cough"],"red_flags":[],"reasons":["short_duration_without_detected_red_flags"],"age":24,"duration_days":1,"recommended_action":"Monitor symptoms and ask a qualified pharmacist for general information; seek medical care if symptoms worsen or persist.","medication_purchase_recommended":false,"disclaimer":"Academic simulated assessment; not a diagnosis, medical advice, or substitute for a qualified healthcare professional."}},"id":3}
 ```
 
 Possible method errors include `-32002`, `-32602`, and `-32603`.
 
 ## Tools
 
-### `classify_symptoms`
+### `assess_symptoms`
 
-**Published description:** `Classifies controlled symptom identifiers into
-educational categories.`
+**Published description:** `Assesses natural-language symptoms using controlled
+simulated rules, including severity and urgent red flags.`
 
 **Exact published `inputSchema`:**
 
@@ -385,22 +413,15 @@ educational categories.`
   "type": "object",
   "properties": {
     "symptoms": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "abdominal_pain",
-          "cough",
-          "diarrhea",
-          "fever",
-          "itchy_eyes",
-          "nasal_congestion",
-          "nausea",
-          "sneezing",
-          "sore_throat"
-        ]
-      },
-      "minItems": 1
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "age": {"type": "integer", "minimum": 0, "maximum": 120},
+    "duration_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 365
     }
   },
   "required": ["symptoms"],
@@ -408,76 +429,59 @@ educational categories.`
 }
 ```
 
-#### Runtime validation and classification
+#### Runtime assessment behavior
 
-- `symptoms` is required and must be a non-empty array.
-- Every item must be a string.
-- Each item is trimmed and converted to lowercase.
-- Normalized identifiers must contain lowercase words separated only by single
-  underscores.
-- Every normalized identifier must belong to the published enum.
-- Duplicates are removed while preserving first-occurrence order.
-- At least two distinct matching symptoms are required for a category.
-- Supported categories are:
-  - `respiratory`: `fever`, `cough`, `sore_throat`.
-  - `allergy`: `sneezing`, `nasal_congestion`, `itchy_eyes`.
-  - `gastrointestinal`: `nausea`, `diarrhea`, `abdominal_pain`.
-- If no category reaches two matches, or the highest score is tied, the result is
-  `unclassified`.
-
-The project does not run a complete JSON Schema validator. In particular,
-although the published schema declares `additionalProperties: false`, the
-current hand-written handler does not reject additional argument properties.
+- `symptoms` is required natural-language text. It is limited to 1000
+  characters and must contain a letter or number.
+- `age` and `duration_days` are optional non-boolean integers in the documented
+  ranges. Explicit JSON `null` is invalid.
+- A controlled, accent-insensitive Spanish and English phrase table extracts
+  the same symptom identifiers used by the original internal classifier.
+- The internal categories remain `respiratory`, `allergy`, and
+  `gastrointestinal`; an assessment may also have a null category.
+- Severity is exactly `mild`, `moderate`, or `urgent`.
+- Controlled urgent red flags include difficulty breathing, chest pain,
+  confusion, fainting, severe bleeding, blue lips, and face or throat swelling.
+- Any detected urgent red flag takes priority over category and duration. The
+  result immediately directs the user to urgent medical care and explicitly
+  says not to select or purchase medication from that result.
+- Age, prolonged duration, prolonged fever, or lack of a controlled category
+  can raise a non-urgent result to `moderate`.
+- This tool does not diagnose, recommend a product, or authorize a purchase.
 
 #### Result structure
 
-The tool returns an MCP result with exactly one text content item:
+Every result contains readable `content` plus `structuredContent` with severity,
+category, recognized symptoms, red flags, reasons, context, action, a false
+`medication_purchase_recommended` flag, and a medical disclaimer.
+
+Example arguments:
+
+```json
+{"symptoms":"Tengo fiebre y dolor de garganta desde ayer","age":24,"duration_days":1}
+```
+
+Relevant structured result:
 
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "Classification: <category>. Matched symptoms: <list or none>. <explanation> Educational use only; not a medical diagnosis."
-    }
-  ]
+  "severity": "mild",
+  "category": "respiratory",
+  "recognized_symptoms": ["fever", "sore_throat"],
+  "matched_symptoms": ["fever", "sore_throat"],
+  "red_flags": [],
+  "reasons": ["short_duration_without_detected_red_flags"],
+  "age": 24,
+  "duration_days": 1,
+  "recommended_action": "Monitor symptoms and ask a qualified pharmacist for general information; seek medical care if symptoms worsen or persist.",
+  "medication_purchase_recommended": false,
+  "disclaimer": "Academic simulated assessment; not a diagnosis, medical advice, or substitute for a qualified healthcare professional."
 }
 ```
 
-The result does not currently include `structuredContent`, `outputSchema`, or an
-explicit `isError` member.
-
-#### Valid example
-
-Arguments:
-
-```json
-{"symptoms":["sneezing","nasal_congestion","itchy_eyes"]}
-```
-
-Result:
-
-```json
-{"content":[{"type":"text","text":"Classification: allergy. Matched symptoms: sneezing, nasal_congestion, itchy_eyes. Symptoms match the allergy category. Educational use only; not a medical diagnosis."}]}
-```
-
-#### Invalid example
-
-Arguments:
-
-```json
-{"symptoms":["fever","magic_symptom"]}
-```
-
-JSON-RPC error when used in a `tools/call` request with ID `4`:
-
-```json
-{"jsonrpc":"2.0","error":{"code":-32602,"message":"Unknown symptom: 'magic_symptom'."},"id":4}
-```
-
-Other invalid cases include a missing or empty array, non-string elements, empty
-identifiers, invalid identifier formatting, and unsupported identifiers. These
-conditions return `-32602` for a request.
+`classify_symptoms` is retained only as an internal deterministic helper. It is
+not listed by `tools/list`, and calling that old public name returns `-32602`
+because no such tool is registered.
 
 ### `search_medications`
 
@@ -656,6 +660,76 @@ read-only tool does not validate a prescription or create an order.
 {"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"Unknown medication SKU: 'MED-MISSING'."}],"isError":true},"id":8}
 ```
 
+### `check_interactions`
+
+**Published description:** `Checks a requested medication against current
+medications and allergies using controlled, non-exhaustive simulated rules.`
+
+**Exact published `inputSchema`:**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "medication_sku": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+    },
+    "current_medications": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+      },
+      "maxItems": 20,
+      "uniqueItems": true,
+      "default": []
+    },
+    "allergies": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 200},
+      "maxItems": 20,
+      "uniqueItems": true,
+      "default": []
+    }
+  },
+  "required": ["medication_sku"],
+  "additionalProperties": false
+}
+```
+
+#### Runtime lookup behavior
+
+- `medication_sku` identifies the requested catalog medication.
+- `current_medications` and `allergies` are optional arrays that default to
+  empty. They are limited to 20 unique values.
+- Medication identifiers are normalized to uppercase and checked against the
+  existing validated catalog.
+- Interaction pairs and allergy terms come only from the validated,
+  read-only `interactions.json` dataset.
+- A well-formed unknown requested or current SKU returns a successful JSON-RPC
+  response with `isError: true`. Malformed arguments return `-32602`.
+- Allergy matching is accent-insensitive and limited to controlled terms for the
+  requested SKU.
+- A result with no alerts explicitly does not establish medication safety.
+- Prescription items are identified, but the tool never recommends or
+  authorizes them.
+- Every result states that the check is simulated, non-exhaustive, and not a
+  replacement for professional review.
+
+#### Example with two simulated alerts
+
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_interactions","arguments":{"medication_sku":"MED-ANA-002","current_medications":["MED-GAS-001"],"allergies":["AINEs"]}},"id":9}
+```
+
+The successful result contains `alert_count: 2`, `highest_severity: "high"`,
+one `medication_interaction`, one `allergy_alert`, `exhaustive: false`,
+`safety_established: false`, and the safety disclaimer. Alert severities describe
+only the controlled academic dataset and are not clinical conclusions.
+
 ### `check_stock`
 
 **Published description:** `Checks read-only inventory for one medication SKU at
@@ -764,8 +838,11 @@ on stderr and cause process exit code `1`.
 ## Security and safety
 
 - The server and all pharmacy data are simulated for academic use.
-- Symptom classification is deterministic educational output, not medical
-  advice, diagnosis, triage, or a treatment recommendation.
+- Symptom assessment is deterministic educational output, not medical advice,
+  diagnosis, or a treatment recommendation. Urgent red flags always prioritize
+  seeking immediate care over medication or purchase information.
+- Interaction and allergy results are based on a small simulated dataset. They
+  are not exhaustive and cannot establish that a medication is safe.
 - A user should seek qualified medical care for health concerns and urgent help
   for emergencies.
 - All client messages and tool arguments are untrusted input. The server performs
@@ -799,18 +876,15 @@ on stderr and cause process exit code `1`.
 - Runtime validation covers the checks documented above but is not a complete
   JSON Schema validator.
 - JSON-RPC batches and multi-line JSON messages are unsupported.
-- There is no LLM integration, natural-language interpretation, HTTP endpoint,
-  remote server, or network authentication.
-- Medication catalog and stock access is exposed only through the three
-  read-only query tools; no tool changes inventory.
+- Natural-language assessment uses only controlled phrase matching; there is no
+  LLM interpretation, HTTP endpoint, remote server, or network authentication.
+- All five tools are read-only. No tool changes inventory or creates an order.
 
 ## Planned tools
 
 The following names describe future pharmacy workflow goals only. They are not
 registered or callable in the current server:
 
-- `assess_symptoms`
-- `check_interactions`
 - `create_order`
 - `get_order_status`
 

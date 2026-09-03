@@ -340,6 +340,64 @@ class StdioTransportTests(unittest.TestCase):
             tool_response["result"]["content"][0]["text"],
         )
 
+    def test_stdio_supports_assessment_and_interaction_workflow(self) -> None:
+        payload = "".join(
+            (
+                json_line(initialize_request()),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "assess_symptoms",
+                            "arguments": {
+                                "symptoms": (
+                                    "Tengo tos y dificultad para respirar"
+                                ),
+                                "age": 24,
+                                "duration_days": 1,
+                            },
+                        },
+                        "id": 8,
+                    }
+                ),
+                json_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "check_interactions",
+                            "arguments": {
+                                "medication_sku": "MED-ANA-002",
+                                "current_medications": ["MED-GAS-001"],
+                                "allergies": [],
+                            },
+                        },
+                        "id": 9,
+                    }
+                ),
+            )
+        )
+
+        exit_code, messages, diagnostics, _ = self.run_transport(payload)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(diagnostics, "")
+        self.assertEqual([message["id"] for message in messages], [1, 8, 9])
+        assessment = messages[1]["result"]["structuredContent"]
+        interactions = messages[2]["result"]["structuredContent"]
+        self.assertEqual(assessment["severity"], "urgent")
+        self.assertFalse(assessment["medication_purchase_recommended"])
+        self.assertEqual(interactions["alert_count"], 1)
+        self.assertFalse(interactions["exhaustive"])
+
 
 if __name__ == "__main__":
     unittest.main()
