@@ -66,7 +66,7 @@ class OfficialGitServerIntegrationTests(unittest.TestCase):
             readme = repository / "README.md"
             readme.write_text(
                 "# Temporary Git MCP demo\n\n"
-                "Filesystem MCP will be integrated in a later phase.\n",
+                "This fixture exercises the Git-only integration path.\n",
                 encoding="utf-8",
             )
 

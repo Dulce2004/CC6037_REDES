@@ -47,8 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-mutation",
         action="store_true",
         help=(
-            "Explicitly authorize configured mutable tools for this invocation; "
-            "repository boundaries still apply."
+            "Explicitly authorize a mutable tool for this invocation; configured "
+            "repository and filesystem boundaries still apply."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -1,5 +1,5 @@
 {
-  "variables": ["MCP_GIT_REPOSITORY_PATH"],
+  "variables": ["MCP_GIT_REPOSITORY_PATH", "MCP_FILESYSTEM_ROOT"],
   "servers": [
     {
       "name": "pharmacy",
@@ -41,6 +41,30 @@
           "git_checkout",
           "git_create_branch"
         ]
+      }
+    },
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "${NPX_EXECUTABLE}",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2026.8.31",
+        "${MCP_FILESYSTEM_ROOT}"
+      ],
+      "cwd": "${MCP_FILESYSTEM_ROOT}",
+      "env": {},
+      "request_timeout_seconds": 60,
+      "shutdown_timeout_seconds": 10,
+      "enabled": true,
+      "filesystem_policy": {
+        "root": "${MCP_FILESYSTEM_ROOT}",
+        "path_arguments": ["path", "paths", "source", "destination"],
+        "creation_arguments": {
+          "write_file": ["path"],
+          "create_directory": ["path"],
+          "move_file": ["destination"]
+        }
       }
     }
   ]

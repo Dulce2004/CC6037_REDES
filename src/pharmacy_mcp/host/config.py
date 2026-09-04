@@ -29,6 +29,7 @@ _SERVER_KEYS = {
     "shutdown_timeout_seconds",
     "enabled",
     "repository_policy",
+    "filesystem_policy",
 }
 _ROOT_KEYS = {"servers", "variables"}
 _VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -36,6 +37,13 @@ _VARIABLE_REFERENCE_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _ARGUMENT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-][A-Za-z0-9_-]*$")
 _REPOSITORY_POLICY_KEYS = {"root", "argument", "mutable_tools"}
+_FILESYSTEM_POLICY_KEYS = {
+    "root",
+    "path_arguments",
+    "creation_arguments",
+}
+_PROJECT_DIRECTORY = Path(__file__).resolve().parents[3]
+_WINDOWS_PLATFORM = os.name == "nt"
 
 
 class HostConfigurationError(ValueError):
@@ -89,6 +97,78 @@ class RepositoryPolicyConfig:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FilesystemPolicyConfig:
+    """Restrict every filesystem path and infer mutation from annotations."""
+
+    root: Path
+    path_arguments: tuple[str, ...]
+    creation_arguments: Mapping[str, frozenset[str]]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.root, Path) or not self.root.is_absolute():
+            raise HostConfigurationError(
+                "Filesystem policy 'root' must resolve to an absolute path."
+            )
+        if ".." in self.root.parts:
+            raise HostConfigurationError(
+                "Filesystem policy 'root' must not contain '..'."
+            )
+        try:
+            canonical_root = self.root.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise HostConfigurationError(
+                "Filesystem policy 'root' must be an existing directory."
+            ) from exc
+        if not canonical_root.is_dir():
+            raise HostConfigurationError(
+                "Filesystem policy 'root' must be an existing directory."
+            )
+        _reject_unsafe_filesystem_root(canonical_root)
+        object.__setattr__(self, "root", canonical_root)
+
+        if (
+            not isinstance(self.path_arguments, tuple)
+            or not self.path_arguments
+            or len(self.path_arguments) != len(set(self.path_arguments))
+            or not all(
+                isinstance(name, str)
+                and _ARGUMENT_NAME_PATTERN.fullmatch(name)
+                for name in self.path_arguments
+            )
+        ):
+            raise HostConfigurationError(
+                "Filesystem policy 'path_arguments' must be a non-empty array "
+                "of unique argument names."
+            )
+        if not isinstance(self.creation_arguments, Mapping):
+            raise HostConfigurationError(
+                "Filesystem policy 'creation_arguments' must be an object."
+            )
+        normalized_creation_arguments: dict[str, frozenset[str]] = {}
+        for tool_name, argument_names in self.creation_arguments.items():
+            if (
+                not isinstance(tool_name, str)
+                or not _TOOL_NAME_PATTERN.fullmatch(tool_name)
+                or "__" in tool_name
+                or not isinstance(argument_names, frozenset)
+                or not argument_names
+                or not all(
+                    isinstance(name, str) and name in self.path_arguments
+                    for name in argument_names
+                )
+            ):
+                raise HostConfigurationError(
+                    "Filesystem policy creation tool/argument names are invalid."
+                )
+            normalized_creation_arguments[tool_name] = argument_names
+        object.__setattr__(
+            self,
+            "creation_arguments",
+            MappingProxyType(normalized_creation_arguments),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StdioServerConfig:
     """Validated configuration for starting one server without a shell."""
 
@@ -102,6 +182,7 @@ class StdioServerConfig:
     enabled: bool = True
     transport: str = "stdio"
     repository_policy: RepositoryPolicyConfig | None = None
+    filesystem_policy: FilesystemPolicyConfig | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -143,6 +224,16 @@ class StdioServerConfig:
         ):
             raise HostConfigurationError(
                 "Server 'repository_policy' must be a repository policy."
+            )
+        if self.filesystem_policy is not None and not isinstance(
+            self.filesystem_policy, FilesystemPolicyConfig
+        ):
+            raise HostConfigurationError(
+                "Server 'filesystem_policy' must be a filesystem policy."
+            )
+        if self.repository_policy is not None and self.filesystem_policy is not None:
+            raise HostConfigurationError(
+                "A server cannot combine repository and filesystem policies."
             )
 
     @property
@@ -287,13 +378,26 @@ def _parse_server(
     )
     cwd = (config_directory / expanded_cwd).resolve()
 
+    expanded_args = tuple(
+        _substitute_variables(
+            argument,
+            declared_variables,
+            environ,
+            f"{label}.args[{argument_index}]",
+        )
+        for argument_index, argument in enumerate(raw_args)
+    )
     raw_command = value["command"]
     if raw_command == "${PYTHON_EXECUTABLE}":
         command = sys.executable
+        command_args = expanded_args
+    elif raw_command == "${NPX_EXECUTABLE}":
+        command, command_args = _npx_launcher(expanded_args)
     elif isinstance(raw_command, str):
         command = _substitute_variables(
             raw_command, declared_variables, environ, f"{label}.command"
         )
+        command_args = expanded_args
     else:
         raise HostConfigurationError(f"'{label}.command' must be a string.")
 
@@ -301,15 +405,7 @@ def _parse_server(
         name=value["name"],
         transport=value["transport"],
         command=command,
-        args=tuple(
-            _substitute_variables(
-                argument,
-                declared_variables,
-                environ,
-                f"{label}.args[{argument_index}]",
-            )
-            for argument_index, argument in enumerate(raw_args)
-        ),
+        args=command_args,
         cwd=cwd,
         env=MappingProxyType(
             {
@@ -337,6 +433,12 @@ def _parse_server(
         enabled=value.get("enabled", True),
         repository_policy=_parse_repository_policy(
             value.get("repository_policy"),
+            label,
+            declared_variables,
+            environ,
+        ),
+        filesystem_policy=_parse_filesystem_policy(
+            value.get("filesystem_policy"),
             label,
             declared_variables,
             environ,
@@ -418,6 +520,126 @@ def _parse_repository_policy(
         argument_name=argument_name,
         mutable_tools=mutable_set,
     )
+
+
+def _parse_filesystem_policy(
+    value: object,
+    label: str,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
+) -> FilesystemPolicyConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) for key in value
+    ):
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy' must be an object."
+        )
+    unexpected = sorted(set(value) - _FILESYSTEM_POLICY_KEYS)
+    if unexpected:
+        raise HostConfigurationError(
+            f"Unexpected fields in '{label}.filesystem_policy': "
+            f"{', '.join(unexpected)}."
+        )
+    for required in ("root", "path_arguments", "creation_arguments"):
+        if required not in value:
+            raise HostConfigurationError(
+                f"'{label}.filesystem_policy.{required}' is required."
+            )
+
+    raw_root = value["root"]
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy.root' must be a non-empty string."
+        )
+    expanded_root = _substitute_variables(
+        raw_root,
+        declared_variables,
+        environ,
+        f"{label}.filesystem_policy.root",
+    )
+    root = Path(expanded_root)
+    if not root.is_absolute():
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy.root' must be an absolute path."
+        )
+
+    raw_path_arguments = value["path_arguments"]
+    if not isinstance(raw_path_arguments, list):
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy.path_arguments' must be an array."
+        )
+    try:
+        path_arguments = tuple(raw_path_arguments)
+        if len(path_arguments) != len(set(path_arguments)):
+            raise HostConfigurationError(
+                f"'{label}.filesystem_policy.path_arguments' must not contain "
+                "duplicates."
+            )
+    except TypeError as exc:
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy.path_arguments' must contain strings."
+        ) from exc
+
+    raw_creation_arguments = value["creation_arguments"]
+    if not isinstance(raw_creation_arguments, dict):
+        raise HostConfigurationError(
+            f"'{label}.filesystem_policy.creation_arguments' must be an object."
+        )
+    creation_arguments: dict[str, frozenset[str]] = {}
+    for tool_name, raw_names in raw_creation_arguments.items():
+        if not isinstance(raw_names, list):
+            raise HostConfigurationError(
+                f"Creation arguments for '{tool_name}' must be an array."
+            )
+        try:
+            names = frozenset(raw_names)
+        except TypeError as exc:
+            raise HostConfigurationError(
+                f"Creation arguments for '{tool_name}' must contain strings."
+            ) from exc
+        if len(names) != len(raw_names):
+            raise HostConfigurationError(
+                f"Creation arguments for '{tool_name}' must not contain duplicates."
+            )
+        creation_arguments[tool_name] = names
+
+    return FilesystemPolicyConfig(
+        root=root,
+        path_arguments=path_arguments,
+        creation_arguments=MappingProxyType(creation_arguments),
+    )
+
+
+def _npx_launcher(arguments: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+    """Return a platform-safe npx argv without enabling a general shell."""
+
+    if _WINDOWS_PLATFORM:
+        command = os.environ.get("COMSPEC", "cmd.exe")
+        return command, ("/d", "/s", "/c", "npx", *arguments)
+    return "npx", arguments
+
+
+def _reject_unsafe_filesystem_root(root: Path) -> None:
+    """Reject roots that grant access to an unnecessarily broad filesystem."""
+
+    anchor = Path(root.anchor).resolve()
+    candidates = (anchor, Path.home().resolve(), _PROJECT_DIRECTORY)
+    if any(_same_config_path(root, candidate) for candidate in candidates):
+        raise HostConfigurationError(
+            "Filesystem policy root must be a dedicated directory, not a system "
+            "root, the full user home, or this project's repository root."
+        )
+
+
+def _same_config_path(first: Path, second: Path) -> bool:
+    if os.path.normcase(str(first)) == os.path.normcase(str(second)):
+        return True
+    try:
+        return os.path.samefile(first, second)
+    except OSError:
+        return False
 
 
 def _substitute_variables(

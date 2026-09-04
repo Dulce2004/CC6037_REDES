@@ -10,9 +10,10 @@ external JSON-RPC package.
 
 The current server accepts newline-delimited JSON-RPC messages over standard
 input and returns protocol responses over standard output. A configurable
-terminal host can launch that server and the pinned official Git MCP server as
-independent child processes, discover namespaced tools dynamically, and invoke
-them while recording the complete MCP exchange in a redacted JSONL log. The
+terminal host can launch that server plus the pinned official Git and Filesystem
+MCP servers as independent child processes, discover namespaced tools
+dynamically, and invoke them while recording a bounded, redacted JSONL protocol
+trace. The
 host's stdio client, lifecycle, JSON-RPC correlation, routing, and policy checks
 remain manually implemented. The direct in-memory pharmacy client and its
 interactive CLI remain available for local demonstrations and tests.
@@ -41,6 +42,10 @@ The implemented MCP subset supports:
 - Official external `mcp-server-git==2026.8.18` integration through `uvx`, with
   dynamically discovered `git__<tool>` names, an exact configured repository
   boundary, and explicit authorization for mutable tools.
+- Official external `@modelcontextprotocol/server-filesystem@2026.8.31`
+  integration through `npx`, with dynamically discovered
+  `filesystem__<tool>` names, one canonical allowed directory, annotation-based
+  mutation authorization, and path-escape protection.
 - JSON-RPC responses and standard error objects with request-ID correlation.
 - Notifications that never produce a JSON-RPC response.
 - Graceful process termination when stdin reaches EOF.
@@ -70,8 +75,9 @@ SQLite; subsequent stock calls read that same state.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
 - Strict local JSON configuration for one or more stdio servers. The committed
-  configuration enables local `pharmacy` and the pinned external `git` server.
-  Only explicitly declared environment variables can be substituted.
+  configuration enables local `pharmacy` and the pinned external `git` and
+  `filesystem` servers. Only explicitly declared environment variables can be
+  substituted.
 - Unit, integration, lifecycle, catalog, transactional order, concurrency, and
   subprocess client/transport tests.
 
@@ -82,22 +88,33 @@ Terminal host CLI
   -> MCP server manager
   -> namespaced registry: <server>__<tool>
   -> one manual stdio MCP client per configured server
-  -> pharmacy child process + official Git MCP child process
+  -> pharmacy + official Git + official Filesystem MCP child processes
   -> stdin/stdout: one UTF-8 JSON-RPC object per line
   -> dynamically discovered server tool registries
-  -> pharmacy domain / SQLite or one bounded disposable Git repository
+  -> pharmacy domain / SQLite or one bounded disposable Git+Filesystem root
 ```
 
 The host completes the MCP initialization lifecycle, discovers each enabled
-server's tools, and owns its child processes. It starts children directly with
-`shell=False`; it does not execute configuration through a command shell. A
+server's tools, and owns its child processes. It starts children with
+`shell=False`; on Windows the controlled npx launcher is `cmd /c npx`, while
+arbitrary configured commands never receive general shell evaluation. A
 general repository policy canonicalizes Git's `repo_path`, requires an exact
 match with the configured root, and blocks configured mutable tools unless the
 CLI invocation includes `--allow-mutation`.
+The Filesystem policy validates every configured `path`, `paths`, `source`, and
+`destination` value against one canonical dedicated root. It rejects relative
+paths, lexical `..`, siblings, missing read targets, and symlink or junction
+escapes. New write destinations are accepted only when their nearest existing
+ancestor remains inside the root. A Filesystem tool is treated as read-only only
+when its discovered annotations say so unambiguously; every other tool requires
+`--allow-mutation`.
 Every outbound MCP request or notification and every inbound response is appended
 to `runtime/mcp-host.jsonl` by default. Machine-readable CLI results are written
 only to stdout. Child diagnostics use stderr; the redacted protocol trace can
-also be mirrored there with `--show-log`.
+also be mirrored there with `--show-log`. Logged payloads and individual strings
+have explicit size limits, binary fields are omitted, and write/edit bodies are
+replaced by markers before persistence; the wire message sent to the child is
+unchanged.
 
 The stdio loop owns one `PharmacyMCPServer` instance, so lifecycle state is
 preserved across input lines until EOF. Protocol output is reserved for stdout;
@@ -120,6 +137,8 @@ files.
 |-- docs/
 |   |-- Proyecto 1 - Uso de un protocolo existente.pdf
 |   |-- demo-guide.md
+|   |-- filesystem-git-mcp-demo.md
+|   |-- git-mcp-demo.md
 |   |-- mcp-host-guide.md
 |   `-- mcp-server-specification.md
 |-- src/
@@ -140,12 +159,15 @@ files.
 - Git and `uvx` for the external Git server. The pinned package itself supports
   Python 3.10 or newer and is resolved in the uv cache, not installed into this
   project.
+- Node.js with npm/npx for the official Filesystem server. Its pinned package is
+  resolved in npm's user cache and does not create `node_modules` or package
+  metadata in this repository.
 - PowerShell or a Bash-compatible terminal.
 
 There are no third-party imports in the project's runtime code.
 `requirements.txt` intentionally contains no package requirements. The external
-Git process uses its own MCP SDK in an isolated uv environment; this project does
-not import `mcp`, FastMCP, or `mcp_server_git`.
+Git and Filesystem processes use their own MCP implementations externally; this
+project does not import their SDKs, FastMCP, `mcp_server_git`, or Node modules.
 
 ## Start the stdio server
 
@@ -185,19 +207,23 @@ PYTHONPATH=src python -m pharmacy_mcp.client.cli
 ## Use the configurable terminal host
 
 Run these commands from the repository root. The default configuration includes
-Pharmacy and Git, so first point Git at a dedicated existing repository. Never
-use the course project's repository for mutation demonstrations:
+Pharmacy, Git, and Filesystem. Point both external servers at the same dedicated
+existing disposable repository for the combined demo. Never use the course
+project's repository or the whole user home:
 
 ```bash
 export MCP_GIT_REPOSITORY_PATH=/absolute/path/to/disposable-demo-repository
+export MCP_FILESYSTEM_ROOT="$MCP_GIT_REPOSITORY_PATH"
 PYTHONPATH=src python -m pharmacy_mcp.host.cli list-servers
 PYTHONPATH=src python -m pharmacy_mcp.host.cli list-tools
 PYTHONPATH=src python -m pharmacy_mcp.host.cli call-tool pharmacy__check_stock --arguments '{"sku":"MED-ANA-001","branch_id":"zona-5"}'
 PYTHONPATH=src python -m pharmacy_mcp.host.cli call-tool git__git_status --arguments "{\"repo_path\":\"$MCP_GIT_REPOSITORY_PATH\"}"
+PYTHONPATH=src python -m pharmacy_mcp.host.cli call-tool filesystem__list_allowed_directories
 ```
 
 In PowerShell, set `$env:PYTHONPATH = "src"` and set
-`$env:MCP_GIT_REPOSITORY_PATH` to the absolute disposable repository path first.
+`$env:MCP_GIT_REPOSITORY_PATH` to the absolute disposable repository path, then
+set `$env:MCP_FILESYSTEM_ROOT = $env:MCP_GIT_REPOSITORY_PATH`.
 Then run the same `python -m pharmacy_mcp.host.cli ...` commands. Use the global
 `--config path/to/config.json` option before the subcommand to select another
 local configuration. Use `--log-file path/to/host.jsonl` to change the durable
@@ -206,6 +232,8 @@ log, `--show-log` to mirror its redacted entries to stderr, and
 path checks still apply when mutation is authorized. Global options must appear
 before the subcommand. See the [terminal host guide](docs/mcp-host-guide.md) and
 [safe Git MCP demonstration](docs/git-mcp-demo.md).
+The [combined Filesystem and Git demonstration](docs/filesystem-git-mcp-demo.md)
+shows the complete create/read/stage/commit workflow.
 
 ## Run the tests
 
@@ -226,8 +254,9 @@ python -B -m unittest discover -s tests -v
 The suite discovers all current tests instead of relying on a hard-coded test
 count. It includes the real stdio entry point, subprocess-client lifecycle,
 multi-server namespacing, independent server state, protocol logging, and host
-CLI behavior. The identified real integration test launches the exact pinned
-`uvx` command and uses only a generated repository under ignored `runtime/`.
+CLI behavior. Real integrations launch the exact pinned `uvx` and `npx`
+commands and use only generated repositories under ignored `runtime/`; the
+combined test runs all three servers and verifies cleanup.
 
 ## Documentation
 
@@ -235,6 +264,7 @@ CLI behavior. The identified real integration test launches the exact pinned
 - [Reproducible stdio demonstration guide](docs/demo-guide.md)
 - [Configurable terminal host guide](docs/mcp-host-guide.md)
 - [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
+- [Combined Filesystem and Git MCP demonstration](docs/filesystem-git-mcp-demo.md)
 
 The specification contains the exact lifecycle, message shapes, method behavior,
 tool schema, result format, and implemented errors. The demonstration guide walks
@@ -259,8 +289,7 @@ through a complete manual handshake and tool call.
 - There is no authentication because the server is a local child process using
   stdio.
 - The host supports only configured local stdio processes. It does not include
-  HTTP, remote servers, Filesystem MCP, or an LLM. Demo file creation therefore
-  happens outside the Git server.
+  HTTP, remote servers, Git remotes, or an LLM.
 - Natural-language symptom handling is limited to deterministic controlled
   phrases; there is no LLM interpretation.
 - Interaction and allergy rules are deliberately small, simulated, and
@@ -275,7 +304,6 @@ The following items are planned possibilities, not implemented functionality:
   requires them.
 - Integrate an LLM for natural-language interaction.
 - Add Streamable HTTP and a remote-server deployment.
-- Integrate a separate Filesystem MCP server for controlled file creation.
 - Capture and analyze later network transports with Wireshark.
 
 ## Technical references
@@ -288,3 +316,5 @@ The following items are planned possibilities, not implemented functionality:
 - [MCP tools, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 - [Official MCP Git server](https://github.com/modelcontextprotocol/servers/tree/main/src/git)
 - [`mcp-server-git` 2026.8.18 on PyPI](https://pypi.org/project/mcp-server-git/2026.8.18/)
+- [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+- [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)

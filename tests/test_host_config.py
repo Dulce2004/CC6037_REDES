@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
@@ -26,8 +28,11 @@ class HostConfigurationTests(unittest.TestCase):
         self.config_path = runtime_directory / f"host-{uuid4().hex}.json"
         self.repository_path = runtime_directory / f"git-config-{uuid4().hex}"
         self.repository_path.mkdir()
+        self.filesystem_path = runtime_directory / f"filesystem-config-{uuid4().hex}"
+        self.filesystem_path.mkdir()
         self.addCleanup(self.config_path.unlink, missing_ok=True)
         self.addCleanup(self.repository_path.rmdir)
+        self.addCleanup(self.filesystem_path.rmdir)
 
     def write_config(self, value: object) -> None:
         self.config_path.write_text(
@@ -35,13 +40,16 @@ class HostConfigurationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_default_config_contains_pharmacy_and_fixed_git_server(self) -> None:
+    def test_default_config_contains_three_fixed_servers(self) -> None:
         config = load_host_config(
             DEFAULT_CONFIG_PATH,
-            environ={"MCP_GIT_REPOSITORY_PATH": str(self.repository_path)},
+            environ={
+                "MCP_GIT_REPOSITORY_PATH": str(self.repository_path),
+                "MCP_FILESYSTEM_ROOT": str(self.filesystem_path),
+            },
         )
 
-        self.assertEqual(len(config.servers), 2)
+        self.assertEqual(len(config.servers), 3)
         pharmacy = config.servers[0]
         self.assertEqual(pharmacy.name, "pharmacy")
         self.assertEqual(pharmacy.transport, "stdio")
@@ -68,7 +76,141 @@ class HostConfigurationTests(unittest.TestCase):
         self.assertEqual(git.cwd, self.repository_path)
         self.assertEqual(git.repository_policy.root, self.repository_path)
         self.assertIn("git_commit", git.repository_policy.mutable_tools)
-        self.assertEqual(config.variables, ("MCP_GIT_REPOSITORY_PATH",))
+        filesystem = config.servers[2]
+        self.assertEqual(filesystem.name, "filesystem")
+        if os.name == "nt":
+            self.assertEqual(Path(filesystem.command).name.casefold(), "cmd.exe")
+            self.assertEqual(filesystem.args[:4], ("/d", "/s", "/c", "npx"))
+            package_index = 5
+        else:
+            self.assertEqual(filesystem.command, "npx")
+            self.assertEqual(filesystem.args[0], "-y")
+            package_index = 1
+        self.assertEqual(
+            filesystem.args[package_index],
+            "@modelcontextprotocol/server-filesystem@2026.8.31",
+        )
+        self.assertEqual(filesystem.args[-1], str(self.filesystem_path))
+        self.assertEqual(filesystem.cwd, self.filesystem_path)
+        self.assertEqual(filesystem.filesystem_policy.root, self.filesystem_path)
+        self.assertEqual(
+            filesystem.filesystem_policy.path_arguments,
+            ("path", "paths", "source", "destination"),
+        )
+        self.assertEqual(
+            config.variables,
+            ("MCP_GIT_REPOSITORY_PATH", "MCP_FILESYSTEM_ROOT"),
+        )
+
+    def test_npx_builtin_uses_controlled_platform_launchers(self) -> None:
+        self.write_config(
+            {
+                "servers": [
+                    {
+                        **self.server_config("filesystem"),
+                        "command": "${NPX_EXECUTABLE}",
+                        "args": ["-y", "example-package", "root"],
+                    }
+                ]
+            }
+        )
+
+        with patch("pharmacy_mcp.host.config._WINDOWS_PLATFORM", False):
+            portable = load_host_config(self.config_path)
+        self.assertEqual(portable.servers[0].argv, ("npx", "-y", "example-package", "root"))
+
+        with patch("pharmacy_mcp.host.config._WINDOWS_PLATFORM", True):
+            windows = load_host_config(self.config_path)
+        self.assertEqual(Path(windows.servers[0].command).name.casefold(), "cmd.exe")
+        self.assertEqual(
+            windows.servers[0].args,
+            ("/d", "/s", "/c", "npx", "-y", "example-package", "root"),
+        )
+
+    def test_filesystem_policy_is_validated_canonical_and_immutable(self) -> None:
+        server = {
+            **self.server_config("filesystem"),
+            "filesystem_policy": {
+                "root": str(self.filesystem_path),
+                "path_arguments": ["path", "paths", "source", "destination"],
+                "creation_arguments": {
+                    "write_file": ["path"],
+                    "move_file": ["destination"],
+                },
+            },
+        }
+        self.write_config({"servers": [server]})
+
+        policy = load_host_config(self.config_path).servers[0].filesystem_policy
+
+        self.assertEqual(policy.root, self.filesystem_path.resolve(strict=True))
+        self.assertEqual(policy.creation_arguments["write_file"], frozenset({"path"}))
+        with self.assertRaises(TypeError):
+            policy.creation_arguments["other"] = frozenset({"path"})
+
+    def test_filesystem_policy_rejects_unsafe_roots_and_invalid_shapes(self) -> None:
+        root_file = self.filesystem_path / "not-a-directory.txt"
+        root_file.write_text("file", encoding="utf-8")
+        self.addCleanup(root_file.unlink, missing_ok=True)
+        valid_policy = {
+            "root": str(self.filesystem_path),
+            "path_arguments": ["path", "paths", "source", "destination"],
+            "creation_arguments": {"write_file": ["path"]},
+        }
+        cases = (
+            {**valid_policy, "root": str(Path(self.filesystem_path.anchor))},
+            {**valid_policy, "root": str(Path.home())},
+            {**valid_policy, "root": str(PROJECT_DIRECTORY)},
+            {
+                **valid_policy,
+                "root": str(
+                    self.filesystem_path.parent
+                    / "unused"
+                    / ".."
+                    / self.filesystem_path.name
+                ),
+            },
+            {**valid_policy, "root": str(self.filesystem_path / "missing")},
+            {**valid_policy, "root": str(root_file)},
+            {**valid_policy, "path_arguments": ["path", "path"]},
+            {**valid_policy, "creation_arguments": {"write_file": ["unknown"]}},
+        )
+        for policy in cases:
+            with self.subTest(policy=policy):
+                self.write_config(
+                    {
+                        "servers": [
+                            {
+                                **self.server_config("filesystem"),
+                                "filesystem_policy": policy,
+                            }
+                        ]
+                    }
+                )
+                with self.assertRaises(HostConfigurationError):
+                    load_host_config(self.config_path)
+
+    def test_repository_and_filesystem_policy_are_mutually_exclusive(self) -> None:
+        self.write_config(
+            {
+                "servers": [
+                    {
+                        **self.server_config("filesystem"),
+                        "repository_policy": {
+                            "root": str(self.repository_path),
+                            "mutable_tools": ["git_add"],
+                        },
+                        "filesystem_policy": {
+                            "root": str(self.filesystem_path),
+                            "path_arguments": ["path"],
+                            "creation_arguments": {"write_file": ["path"]},
+                        },
+                    }
+                ]
+            }
+        )
+        with self.assertRaisesRegex(HostConfigurationError, "cannot combine"):
+            load_host_config(self.config_path)
 
     def test_required_declared_variable_must_be_present_and_nonempty(self) -> None:
         self.write_config(

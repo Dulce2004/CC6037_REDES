@@ -6,6 +6,7 @@ import json
 import re
 import sys
 import threading
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
@@ -16,6 +17,11 @@ DEFAULT_LOG_PATH = (
     Path(__file__).resolve().parents[3] / "runtime" / "mcp-host.jsonl"
 )
 REDACTION_MARKER = "[REDACTED]"
+TRUNCATION_MARKER = "[TRUNCATED]"
+BINARY_OMISSION_MARKER = "[BINARY OMITTED]"
+WRITE_CONTENT_OMISSION_MARKER = "[WRITE CONTENT OMITTED]"
+DEFAULT_MAX_LOG_PAYLOAD_CHARS = 16_384
+DEFAULT_MAX_LOG_STRING_CHARS = 4_096
 
 _SENSITIVE_KEYS = {
     "api_key",
@@ -31,6 +37,7 @@ _SENSITIVE_TEXT_PATTERN = re.compile(
     r"(?i)\b(api_key|apikey|authorization|token|access_token|password|secret|"
     r"client_secret)\b(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
 )
+_BINARY_VALUE_KEYS = {"blob", "data"}
 
 
 class MCPLogError(RuntimeError):
@@ -63,9 +70,13 @@ class MCPProtocolLogger:
         *,
         diagnostic_stream: TextIO | None = None,
         show_traffic: bool = False,
+        max_payload_chars: int = DEFAULT_MAX_LOG_PAYLOAD_CHARS,
+        max_string_chars: int = DEFAULT_MAX_LOG_STRING_CHARS,
     ) -> None:
         if not isinstance(show_traffic, bool):
             raise TypeError("'show_traffic' must be a boolean.")
+        _validate_log_limit(max_payload_chars, "max_payload_chars", minimum=256)
+        _validate_log_limit(max_string_chars, "max_string_chars", minimum=64)
         try:
             self.path = Path(log_path).resolve()
         except (TypeError, OSError) as exc:
@@ -74,6 +85,8 @@ class MCPProtocolLogger:
             diagnostic_stream if diagnostic_stream is not None else sys.stderr
         )
         self._show_traffic = show_traffic
+        self._max_payload_chars = max_payload_chars
+        self._max_string_chars = max_string_chars
         self._lock = threading.RLock()
         self._file: TextIO | None = None
         self._failure: MCPLogError | None = None
@@ -107,7 +120,7 @@ class MCPProtocolLogger:
     ) -> None:
         """Record child stderr and keep diagnostics visible on host stderr."""
 
-        payload = _sanitize_unstructured_text(text)
+        payload = self._bounded_payload(_sanitize_unstructured_text(text))
         entry: dict[str, JsonValue] = {
             "timestamp": _utc_timestamp(),
             "server": server_name,
@@ -139,7 +152,7 @@ class MCPProtocolLogger:
             "direction": "local",
             "message_type": event_type,
             "method": method,
-            "payload": redact_sensitive_data(payload),
+            "payload": self._bounded_payload(payload),
         }
         line = self._append_entry(entry)
         if self._show_traffic:
@@ -180,7 +193,9 @@ class MCPProtocolLogger:
             "transport": transport,
             "direction": direction,
             "message_type": message_type,
-            "payload": redact_sensitive_data(decoded),
+            "payload": self._bounded_payload(
+                _omit_write_content(decoded) if direction == "outbound" else decoded
+            ),
         }
         if isinstance(decoded, dict):
             method = decoded.get("method")
@@ -192,6 +207,13 @@ class MCPProtocolLogger:
         line = self._append_entry(entry)
         if self._show_traffic:
             self._write_diagnostic(f"[MCP log] {line}")
+
+    def _bounded_payload(self, value: JsonValue) -> JsonValue:
+        return _prepare_log_payload(
+            value,
+            max_payload_chars=self._max_payload_chars,
+            max_string_chars=self._max_string_chars,
+        )
 
     def _append_entry(self, entry: dict[str, JsonValue]) -> str:
         line = json.dumps(
@@ -272,6 +294,135 @@ def _sanitize_unstructured_text(value: str) -> str:
         allow_nan=False,
         separators=(",", ":"),
     )
+
+
+def _prepare_log_payload(
+    value: JsonValue,
+    *,
+    max_payload_chars: int,
+    max_string_chars: int,
+) -> JsonValue:
+    """Redact first, then bound strings and the complete logged payload."""
+
+    redacted = redact_sensitive_data(value)
+    bounded = _truncate_values(redacted, max_string_chars=max_string_chars)
+    serialized = json.dumps(
+        bounded,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    if len(serialized) <= max_payload_chars:
+        return bounded
+
+    wrapper: dict[str, JsonValue] = {
+        "truncated": True,
+        "marker": TRUNCATION_MARKER,
+        "original_characters": len(serialized),
+        "preview": "",
+    }
+    preview = serialized[:max_payload_chars]
+    while preview:
+        wrapper["preview"] = preview
+        wrapper_text = json.dumps(
+            wrapper,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+        if len(wrapper_text) <= max_payload_chars:
+            break
+        overflow = len(wrapper_text) - max_payload_chars
+        preview = preview[: max(0, len(preview) - overflow - 1)]
+    wrapper["preview"] = preview
+    return wrapper
+
+
+def _omit_write_content(value: JsonValue) -> JsonValue:
+    """Omit write/edit bodies while retaining the observable MCP request shape."""
+
+    if not isinstance(value, dict) or value.get("method") != "tools/call":
+        return value
+    params = value.get("params")
+    if not isinstance(params, dict):
+        return value
+    tool_name = params.get("name")
+    if tool_name not in {"write_file", "edit_file"}:
+        return value
+    arguments = params.get("arguments")
+    if not isinstance(arguments, dict):
+        return value
+
+    protected = deepcopy(value)
+    protected_arguments = protected["params"]["arguments"]
+    if tool_name == "write_file":
+        if "content" in protected_arguments:
+            content = protected_arguments["content"]
+            detail = (
+                f"{len(content)} characters"
+                if isinstance(content, str)
+                else "non-string value"
+            )
+            protected_arguments["content"] = (
+                f"{WRITE_CONTENT_OMISSION_MARKER} ({detail})"
+            )
+    else:
+        edits = protected_arguments.get("edits")
+        if isinstance(edits, list):
+            for edit in edits:
+                if not isinstance(edit, dict):
+                    continue
+                for key in ("oldText", "newText"):
+                    if key in edit:
+                        content = edit[key]
+                        detail = (
+                            f"{len(content)} characters"
+                            if isinstance(content, str)
+                            else "non-string value"
+                        )
+                        edit[key] = (
+                            f"{WRITE_CONTENT_OMISSION_MARKER} "
+                            f"({detail})"
+                        )
+    return protected
+
+
+def _truncate_values(value: JsonValue, *, max_string_chars: int) -> JsonValue:
+    if isinstance(value, dict):
+        result: dict[str, JsonValue] = {}
+        for key, item in value.items():
+            if key.casefold() in _BINARY_VALUE_KEYS and isinstance(item, str):
+                result[key] = f"{BINARY_OMISSION_MARKER} ({len(item)} characters)"
+            else:
+                result[key] = _truncate_values(
+                    item,
+                    max_string_chars=max_string_chars,
+                )
+        return result
+    if isinstance(value, list):
+        return [
+            _truncate_values(item, max_string_chars=max_string_chars)
+            for item in value
+        ]
+    if isinstance(value, str) and len(value) > max_string_chars:
+        omitted = len(value) - max_string_chars
+        return (
+            f"{value[:max_string_chars]}{TRUNCATION_MARKER} "
+            f"({omitted} characters omitted)"
+        )
+    return value
+
+
+def _validate_log_limit(value: object, name: str, *, minimum: int) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or value > 1_000_000
+    ):
+        raise ValueError(
+            f"'{name}' must be an integer from {minimum} through 1000000."
+        )
 
 
 def _utc_timestamp() -> str:

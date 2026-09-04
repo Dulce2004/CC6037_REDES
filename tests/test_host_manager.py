@@ -7,6 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import MappingProxyType
+from unittest.mock import patch
 from uuid import uuid4
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
@@ -156,6 +157,37 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertEqual(tool.server_name, "pharmacy")
         self.assertEqual(tool.tool_name, "check_stock")
 
+    def test_partial_failure_rolls_back_every_server_started_by_start_all(self) -> None:
+        configs = tuple(
+            self.server_config(name, self.database_paths[index % 2])
+            for index, name in enumerate(("pharmacy", "git", "filesystem"))
+        )
+        manager = MCPServerManager(
+            HostConfig(servers=configs),
+            protocol_logger=self.protocol_logger,
+        )
+        clients: dict[str, _StartClient] = {}
+
+        def create_client(config, *, protocol_logger):
+            client = _StartClient(
+                config.name,
+                fail_on_start=config.name == "filesystem",
+            )
+            clients[config.name] = client
+            return client
+
+        with patch(
+            "pharmacy_mcp.host.manager.StdioMCPClient",
+            side_effect=create_client,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "start failed"):
+                manager.start_all()
+
+        self.assertEqual(set(clients), {"pharmacy", "git", "filesystem"})
+        self.assertTrue(all(client.stopped for client in clients.values()))
+        self.assertEqual(manager._clients, {})
+        self.assertEqual(manager.list_tools(), ())
+
     def test_server_tool_name_with_separator_or_unsafe_character_is_rejected(
         self,
     ) -> None:
@@ -179,6 +211,28 @@ class MCPServerManagerTests(unittest.TestCase):
                         ),
                     )
 
+    def test_real_tool_annotations_schemas_and_extra_fields_are_preserved(self) -> None:
+        config = self.manager._config.servers[0]
+        definition = {
+            "name": "read_text_file",
+            "title": "Read Text File",
+            "description": "Read text.",
+            "inputSchema": {"type": "object", "required": ["path"]},
+            "outputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": True, "openWorldHint": False},
+            "execution": {"taskSupport": "forbidden"},
+        }
+
+        tool = self.manager._registered_definitions(config, (definition,))[0]
+        public = tool.to_dict()
+
+        self.assertEqual(public["name"], "pharmacy__read_text_file")
+        self.assertEqual(public["tool"], "read_text_file")
+        self.assertEqual(public["inputSchema"], definition["inputSchema"])
+        self.assertEqual(public["outputSchema"], definition["outputSchema"])
+        self.assertEqual(public["annotations"], definition["annotations"])
+        self.assertEqual(public["execution"], definition["execution"])
+
     @staticmethod
     def server_config(name: str, database_path: Path) -> StdioServerConfig:
         return StdioServerConfig(
@@ -201,6 +255,36 @@ class MCPServerManagerTests(unittest.TestCase):
         for database_path in self.database_paths:
             for suffix in ("", "-shm", "-wal"):
                 Path(f"{database_path}{suffix}").unlink(missing_ok=True)
+
+
+class _StartClient:
+    def __init__(self, name: str, *, fail_on_start: bool) -> None:
+        self.name = name
+        self.fail_on_start = fail_on_start
+        self.is_ready = False
+        self.stopped = False
+
+    @property
+    def process_id(self) -> int | None:
+        return None
+
+    def start(self) -> None:
+        if self.fail_on_start:
+            raise RuntimeError("start failed")
+        self.is_ready = True
+
+    def list_tools(self):
+        return (
+            {
+                "name": "sample_tool",
+                "description": "Sample.",
+                "inputSchema": {"type": "object"},
+            },
+        )
+
+    def stop(self) -> None:
+        self.stopped = True
+        self.is_ready = False
 
 
 if __name__ == "__main__":

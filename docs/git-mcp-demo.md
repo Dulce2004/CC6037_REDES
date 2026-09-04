@@ -9,8 +9,8 @@ at the pinned PyPI version
 It never points the Git server at this project. It creates a dedicated local
 repository under ignored `runtime/`, uses repository-local identity, performs no
 remote operation, and asks for human confirmation before the demonstration
-commit. Filesystem MCP is intentionally pending, so the README is edited outside
-the Git server.
+commit. Filesystem MCP is available in the host, but this Git-only guide edits
+the README outside either server. Use the combined guide for the Filesystem flow.
 
 The host requests and observed the MCP revision `2025-11-25`. The external
 server returned the same revision, so the normal lifecycle described by the
@@ -82,26 +82,28 @@ $env:PYTHONPATH = "src"
 $env:PYTHONDONTWRITEBYTECODE = "1"
 $env:PHARMACY_MCP_DATABASE_PATH = $databasePath
 $env:MCP_GIT_REPOSITORY_PATH = (Resolve-Path $demoRepo).Path
+$env:MCP_FILESYSTEM_ROOT = $env:MCP_GIT_REPOSITORY_PATH
 $repoArguments = @{repo_path = $env:MCP_GIT_REPOSITORY_PATH} | ConvertTo-Json -Compress
 ```
 
 The setup commit exists only to make the subsequent unstaged diff visible. Both
 identity values were written with `--local` inside the disposable repository.
 
-## Discover both servers and inspect Git
+## Discover Git and inspect the repository
 
-`list-tools` starts Pharmacy and Git together, completes both handshakes,
-discovers each tool list, writes the JSONL exchanges, and then closes both child
-processes by closing stdin:
+The server-filtered command starts Git, completes its handshake, discovers its
+tool list, writes the JSONL exchanges, and then closes the child by closing
+stdin. The Filesystem root variable is still required because the strict loader
+validates the complete default configuration before selecting a server:
 
 ```powershell
 python -m pharmacy_mcp.host.cli --log-file $logPath list-servers
-python -m pharmacy_mcp.host.cli --log-file $logPath list-tools
+python -m pharmacy_mcp.host.cli --log-file $logPath list-tools --server git
 python -m pharmacy_mcp.host.cli --log-file $logPath call-tool git__git_status --arguments $repoArguments
 ```
 
-The global registry should contain seven `pharmacy__...` tools and the Git tools
-actually returned by `tools/list`. At minimum, verify
+The registry should contain the Git tools actually returned by `tools/list`. At
+minimum, verify
 `git__git_status`, `git__git_diff_unstaged`, `git__git_diff_staged`,
 `git__git_add`, `git__git_commit`, and `git__git_log`.
 
@@ -111,7 +113,7 @@ tool:
 ```powershell
 Add-Content -LiteralPath (Join-Path $demoRepo "README.md") -Encoding utf8 -Value @(
     ""
-    "Filesystem MCP will be integrated in the next phase."
+    "This Git-only guide performs the edit outside the MCP servers."
 )
 python -m pharmacy_mcp.host.cli --log-file $logPath call-tool git__git_diff_unstaged --arguments $repoArguments
 ```
@@ -179,10 +181,10 @@ $entries | Where-Object { $_.server -eq "git" -and $_.method -eq "tools/call" }
 $entries | Where-Object { $_.direction -eq "local" }
 ```
 
-The log should contain separate `server: "pharmacy"` and `server: "git"`
-entries for initialization, the initialized notification, tool discovery, tool
-calls, responses, and local policy decisions. It never records the complete
-process environment. Each CLI command closes the child processes it starts.
+The log should contain `server: "git"` entries for initialization, the
+initialized notification, tool discovery, tool calls, responses, and local
+policy decisions. It never records the complete process environment. Each CLI
+command closes the child processes it starts.
 
 There is deliberately no automatic cleanup command in this guide. Inspect
 `$demoBase` and remove that exact dedicated directory manually only when you no

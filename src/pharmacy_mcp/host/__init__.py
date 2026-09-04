@@ -2,6 +2,7 @@
 
 from .config import (
     DEFAULT_CONFIG_PATH,
+    FilesystemPolicyConfig,
     HostConfig,
     HostConfigurationError,
     RepositoryPolicyConfig,
@@ -15,13 +16,24 @@ from .manager import (
     ServerSummary,
 )
 from .protocol_log import (
+    BINARY_OMISSION_MARKER,
+    DEFAULT_MAX_LOG_PAYLOAD_CHARS,
+    DEFAULT_MAX_LOG_STRING_CHARS,
     DEFAULT_LOG_PATH,
     REDACTION_MARKER,
+    TRUNCATION_MARKER,
+    WRITE_CONTENT_OMISSION_MARKER,
     MCPLogError,
     MCPProtocolLogger,
     redact_sensitive_data,
 )
-from .policy import RepositoryPolicyViolation, prepare_repository_invocation
+from .policy import (
+    FilesystemInvocation,
+    FilesystemPolicyViolation,
+    RepositoryPolicyViolation,
+    prepare_filesystem_invocation,
+    prepare_repository_invocation,
+)
 from .stdio_client import (
     HOST_NAME,
     HOST_VERSION,
@@ -36,11 +48,19 @@ from .stdio_client import (
 __all__ = [
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_LOG_PATH",
+    "DEFAULT_MAX_LOG_PAYLOAD_CHARS",
+    "DEFAULT_MAX_LOG_STRING_CHARS",
+    "BINARY_OMISSION_MARKER",
     "HOST_NAME",
     "HOST_VERSION",
     "MCP_PROTOCOL_VERSION",
     "NAMESPACE_SEPARATOR",
     "REDACTION_MARKER",
+    "TRUNCATION_MARKER",
+    "WRITE_CONTENT_OMISSION_MARKER",
+    "FilesystemInvocation",
+    "FilesystemPolicyConfig",
+    "FilesystemPolicyViolation",
     "HostConfig",
     "HostConfigurationError",
     "MCPHostError",
@@ -57,6 +77,7 @@ __all__ = [
     "StdioMCPClient",
     "StdioServerConfig",
     "load_host_config",
+    "prepare_filesystem_invocation",
     "prepare_repository_invocation",
     "redact_sensitive_data",
 ]

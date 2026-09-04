@@ -7,9 +7,10 @@ configuration, starts enabled stdio servers as child processes, completes the
 MCP initialization lifecycle, discovers their tools, and routes manual calls by
 a reversible global name.
 
-The committed configuration contains the local `pharmacy` server and the
-official external `mcp-server-git==2026.8.18` process. The host does not
-integrate an LLM, HTTP transport, remote services, or Filesystem MCP.
+The committed configuration contains the local `pharmacy` server, official
+external `mcp-server-git==2026.8.18`, and official external
+`@modelcontextprotocol/server-filesystem@2026.8.31`. The host does not integrate
+an LLM, HTTP transport, remote services, or Git remotes.
 
 ```text
 Host CLI
@@ -18,6 +19,7 @@ Host CLI
       -> StdioMCPClient
           -> pharmacy child process
           -> pinned official Git MCP child process
+          -> pinned official Filesystem MCP child process
               -> NDJSON JSON-RPC over stdin/stdout
 ```
 
@@ -33,7 +35,7 @@ array and an optional `variables` array. Each server definition supports:
 | --- | --- | --- |
 | `name` | yes | Unique namespace prefix made of letters, digits, `_`, or `-`; it must start with a letter, cannot contain `__`, and cannot end in `_`. |
 | `transport` | yes | Must currently be `stdio`. |
-| `command` | yes | Executable path or `${PYTHON_EXECUTABLE}` for the current Python interpreter. |
+| `command` | yes | Executable path, `${PYTHON_EXECUTABLE}`, or the controlled `${NPX_EXECUTABLE}` launcher. |
 | `args` | no | Array of literal process arguments. |
 | `cwd` | no | Working directory, resolved relative to the configuration file; default is `.`. |
 | `env` | no | String environment variables added to the inherited process environment. |
@@ -41,23 +43,31 @@ array and an optional `variables` array. Each server definition supports:
 | `shutdown_timeout_seconds` | no | Positive graceful-shutdown timeout up to 300 seconds; default is 5. |
 | `enabled` | no | Whether `list-tools` starts the server; default is `true`. |
 | `repository_policy` | no | General host policy that fixes a repository argument to one canonical root and declares original mutable tool names. |
+| `filesystem_policy` | no | Filesystem path boundary, inspected path argument names, and explicitly permitted creation destinations. |
 
 Unknown fields, duplicate or ambiguous names, missing required fields, invalid
 directories, and unsupported transports are rejected before a process starts.
-Commands are passed directly to the operating system with `shell=False`.
+Commands are passed with `shell=False`. On Windows only the built-in npx token
+expands to `cmd /d /s /c npx ...`, because npm installs npx as a command script;
+on other platforms it expands to `npx ...`. User-supplied command strings are
+never evaluated by a general shell.
 
 The default pharmacy process inherits the terminal environment and adds
 `PYTHONPATH=src`. The committed configuration has no personal absolute paths or
 secrets. `${PYTHON_EXECUTABLE}` resolves to the interpreter running the host, and
 relative `cwd` values resolve from the configuration file.
 
-The only declared environment substitution is
-`${MCP_GIT_REPOSITORY_PATH}`. The loader rejects undeclared references and fails
+The declared substitutions are `${MCP_GIT_REPOSITORY_PATH}` and
+`${MCP_FILESYSTEM_ROOT}`. The loader rejects undeclared references and fails
 before starting a process when a required value is missing or empty. It does not
 expand the environment wholesale, log environment mappings, or invoke a shell.
 Set this variable to an existing, absolute, dedicated Git repository before
 using the default configuration. The value supplies both Git's
 `--repository` argument and the host's independent repository policy.
+Set `MCP_FILESYSTEM_ROOT` to an existing absolute dedicated directory. It is the
+only allowed directory passed to the Filesystem process and the root enforced
+independently by the host policy. A system-volume root, the complete user home,
+and this project's repository root are rejected.
 
 The Git process command is fixed to:
 
@@ -65,12 +75,20 @@ The Git process command is fixed to:
 uvx --from mcp-server-git==2026.8.18 mcp-server-git --repository <configured-root>
 ```
 
-This external server uses its own MCP SDK inside uv's isolated environment. The
-project's client remains manual and imports neither that SDK nor the Git server.
+The Filesystem process command is fixed to the platform equivalent of:
+
+```text
+npx -y @modelcontextprotocol/server-filesystem@2026.8.31 <configured-root>
+```
+
+The external servers use their own MCP implementations outside this project. The
+project's client remains manual and imports neither those SDKs nor either server.
 The package requires Python 3.10 or newer and is MIT licensed. Its first `uvx`
 run may download artifacts into the user uv cache; after the cache is populated,
 set `UV_OFFLINE=1` or add uv's `--offline` option in a private configuration when
 working without network access.
+The first Filesystem run may similarly populate npm's user cache. No
+`package.json`, lock file, or `node_modules` directory belongs in this project.
 
 To isolate pharmacy state, set `PHARMACY_MCP_DATABASE_PATH` in a private local
 configuration's `env` object. The host never writes or logs the complete child
@@ -85,12 +103,15 @@ Bash-compatible shell:
 ```bash
 export PYTHONPATH=src
 export MCP_GIT_REPOSITORY_PATH=/absolute/path/to/disposable-demo-repository
+export MCP_FILESYSTEM_ROOT="$MCP_GIT_REPOSITORY_PATH"
 python -m pharmacy_mcp.host.cli list-servers
 python -m pharmacy_mcp.host.cli list-tools
 python -m pharmacy_mcp.host.cli list-tools --server pharmacy
 python -m pharmacy_mcp.host.cli list-tools --server git
+python -m pharmacy_mcp.host.cli list-tools --server filesystem
 python -m pharmacy_mcp.host.cli call-tool pharmacy__check_stock --arguments '{"sku":"MED-ANA-001","branch_id":"zona-5"}'
 python -m pharmacy_mcp.host.cli call-tool git__git_status --arguments "{\"repo_path\":\"$MCP_GIT_REPOSITORY_PATH\"}"
+python -m pharmacy_mcp.host.cli call-tool filesystem__list_allowed_directories
 ```
 
 PowerShell:
@@ -98,12 +119,15 @@ PowerShell:
 ```powershell
 $env:PYTHONPATH = "src"
 $env:MCP_GIT_REPOSITORY_PATH = (Resolve-Path "path/to/disposable-demo-repository").Path
+$env:MCP_FILESYSTEM_ROOT = $env:MCP_GIT_REPOSITORY_PATH
 python -m pharmacy_mcp.host.cli list-servers
 python -m pharmacy_mcp.host.cli list-tools
 python -m pharmacy_mcp.host.cli list-tools --server pharmacy
 python -m pharmacy_mcp.host.cli list-tools --server git
+python -m pharmacy_mcp.host.cli list-tools --server filesystem
 python -m pharmacy_mcp.host.cli call-tool pharmacy__check_stock --arguments '{"sku":"MED-ANA-001","branch_id":"zona-5"}'
 python -m pharmacy_mcp.host.cli call-tool git__git_status --arguments ('{"repo_path":' + ($env:MCP_GIT_REPOSITORY_PATH | ConvertTo-Json -Compress) + '}')
+python -m pharmacy_mcp.host.cli call-tool filesystem__list_allowed_directories
 ```
 
 Global options go before the subcommand. To select another local server
@@ -170,9 +194,35 @@ following original/global pairs:
 - `git_show` / `git__git_show`
 - `git_branch` / `git__git_branch`
 
-The registry preserves descriptions, input schemas, valid annotations, and the
-original name. Results are passed through as valid MCP values: `content`, text
-blocks, `isError`, and additional fields are preserved, and
+The Filesystem list is also discovered, not hardcoded. The pinned package was
+observed reporting `serverInfo.name: "secure-filesystem-server"`, implementation
+version `0.2.0`, MCP revision `2025-11-25`, and `tools.listChanged: true`. Its
+14 original tools are registered as:
+
+- `filesystem__read_file` (deprecated upstream in favor of `read_text_file`);
+- `filesystem__read_text_file`;
+- `filesystem__read_media_file`;
+- `filesystem__read_multiple_files`;
+- `filesystem__write_file`;
+- `filesystem__edit_file`;
+- `filesystem__create_directory`;
+- `filesystem__list_directory`;
+- `filesystem__list_directory_with_sizes`;
+- `filesystem__directory_tree`;
+- `filesystem__move_file`;
+- `filesystem__search_files`;
+- `filesystem__get_file_info`;
+- `filesystem__list_allowed_directories`.
+
+The read, list, tree, search, and metadata tools publish
+`readOnlyHint: true`. `write_file`, `edit_file`, `create_directory`, and
+`move_file` publish `readOnlyHint: false`. The host preserves those annotations
+from `tools/list`; it does not maintain a second copy of the upstream tool list
+for dispatch.
+
+The registry preserves descriptions, input/output schemas, annotations, extra
+tool metadata, and the original name. Results are passed through as valid MCP
+values: `content`, text blocks, `isError`, and additional fields are preserved, and
 `structuredContent` is not required. JSON-RPC errors remain host errors; the
 host does not invent JSON from Git's text output.
 
@@ -198,6 +248,44 @@ error and nonzero exit status. A tool execution result containing
 `"isError": true` remains a successful JSON-RPC response and is printed as the
 tool result, preserving MCP error semantics.
 
+## Filesystem path and mutation policy
+
+`filesystem_policy` is separate from `repository_policy`; one server cannot use
+both. It canonicalizes the configured root once, while preserving each accepted
+path string exactly as supplied in the MCP request. For every call it checks all
+present `path`, `paths`, `source`, and `destination` values. Paths must be
+absolute and cannot contain a lexical `..` segment. Existing targets must be the
+root itself or a descendant after resolving symlinks and Windows junctions.
+Sibling-prefix paths and links that escape to another directory are rejected.
+
+Missing targets are rejected for reads and edits. They are accepted only for the
+configured creation argument of `write_file`, `create_directory`, or the
+`destination` of `move_file`, and only when the nearest existing canonical
+ancestor remains within the root. Every member of the `paths` array and both
+move endpoints are validated independently. Authorization never broadens this
+path boundary.
+
+Mutation classification deliberately trusts annotations only in the safe
+direction. A tool is read-only without a flag only if its discovered annotation
+contains exactly `readOnlyHint: true` and does not say
+`destructiveHint: true`. Missing, malformed, ambiguous, or write annotations
+require the global `--allow-mutation` flag. A local rejection is logged and no
+request reaches the child. An authorized write logs only server/tool names and
+the number of checked paths before the protocol call.
+`idempotentHint: true` never makes an overwriting tool read-only, and
+`openWorldHint` is preserved for clients but does not relax the local root.
+
+Example after setting `MCP_FILESYSTEM_ROOT`:
+
+```powershell
+$readme = Join-Path $env:MCP_FILESYSTEM_ROOT "README.md"
+$writeArguments = @{path = $readme; content = "# Controlled demo"} | ConvertTo-Json -Compress
+python -m pharmacy_mcp.host.cli call-tool filesystem__write_file --arguments $writeArguments
+python -m pharmacy_mcp.host.cli --allow-mutation call-tool filesystem__write_file --arguments $writeArguments
+$readArguments = @{path = $readme} | ConvertTo-Json -Compress
+python -m pharmacy_mcp.host.cli call-tool filesystem__read_text_file --arguments $readArguments
+```
+
 ## Durable JSONL protocol log
 
 Every CLI run explicitly opens a durable append-only log before it can start a
@@ -221,10 +309,11 @@ Each line is one complete JSON object with:
 - `direction`: `outbound`, `inbound`, `diagnostic`, or `local`;
 - `message_type`: `request`, `notification`, `response`, `error`, `diagnostic`,
   `invalid`, `mutation_rejected`, `mutation_authorized`, or
-  `repository_rejected`;
+  `repository_rejected`; Filesystem policy also emits `filesystem_rejected` and
+  `filesystem_read_allowed`;
 - `method`: included when the JSON-RPC message has one;
 - `id`: included when the JSON-RPC message has one, including a null ID;
-- `payload`: the complete redacted message.
+- `payload`: a redacted and explicitly bounded representation of the message.
 
 The log covers `initialize` and its response,
 `notifications/initialized`, `tools/list` and its response, and every
@@ -242,6 +331,15 @@ arrays. The controlled key set is `api_key`, `apikey`, `authorization`, `token`,
 the child. The same redacted representation is used for optional stderr
 visualization. Child stderr diagnostics are also sanitized before display and
 persistence.
+
+Redaction happens before size limiting. By default, individual logged strings
+are limited to 4,096 characters and the serialized `payload` to 16,384
+characters. Larger values include `[TRUNCATED]` and their original/omitted size;
+an oversized complete payload becomes a small valid JSON wrapper with a bounded
+preview. String `data` and `blob` fields use `[BINARY OMITTED]`. Outbound
+Filesystem `write_file.content` and `edit_file` old/new text use
+`[WRITE CONTENT OMITTED]`. These transformations affect only the log copy: the
+original JSON-RPC message is sent unchanged. There is no automatic rotation.
 
 ## stdout, stderr, and log visualization
 
@@ -269,11 +367,14 @@ demo; the host never deletes a user-provided path. Do not delete the versioned
 catalog or inventory JSON files. Never recursively remove the project root;
 `runtime/` may contain persistent local order state.
 
-See [Safe Git MCP demonstration](git-mcp-demo.md) for the complete local-only
-workflow and human confirmation point.
+See [Safe Git MCP demonstration](git-mcp-demo.md) for the Git-only workflow, or
+the [combined Filesystem and Git demonstration](filesystem-git-mcp-demo.md) for
+the complete three-server workflow and human confirmation point.
 
 ## References
 
 - [Official MCP Git server](https://github.com/modelcontextprotocol/servers/tree/main/src/git)
 - [`mcp-server-git` 2026.8.18 on PyPI](https://pypi.org/project/mcp-server-git/2026.8.18/)
+- [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+- [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
 - [MCP lifecycle and version negotiation, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)

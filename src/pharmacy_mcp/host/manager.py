@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pharmacy_mcp.jsonrpc.messages import JsonValue
 
 from .config import HostConfig, StdioServerConfig
-from .policy import RepositoryPolicyViolation, prepare_repository_invocation
+from .policy import (
+    FilesystemPolicyViolation,
+    RepositoryPolicyViolation,
+    prepare_filesystem_invocation,
+    prepare_repository_invocation,
+)
 from .protocol_log import MCPProtocolLogger
 from .stdio_client import MCPHostError, MCPProtocolError
 from .stdio_client import StdioMCPClient
@@ -29,15 +34,17 @@ class RegisteredTool:
     description: str
     input_schema: dict[str, JsonValue]
     annotations: dict[str, JsonValue] | None = None
+    extra_fields: dict[str, JsonValue] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, JsonValue]:
-        result: dict[str, JsonValue] = {
+        result = deepcopy(self.extra_fields)
+        result.update({
             "name": self.namespaced_name,
             "server": self.server_name,
             "tool": self.tool_name,
             "description": self.description,
             "inputSchema": deepcopy(self.input_schema),
-        }
+        })
         if self.annotations is not None:
             result["annotations"] = deepcopy(self.annotations)
         return result
@@ -243,6 +250,47 @@ class MCPServerManager:
                         "global_tool": tool.namespaced_name,
                     },
                 )
+        filesystem_policy = config.filesystem_policy
+        if filesystem_policy is not None:
+            try:
+                invocation = prepare_filesystem_invocation(
+                    filesystem_policy,
+                    tool_name=tool.tool_name,
+                    arguments=arguments,
+                    annotations=tool.annotations,
+                    allow_mutation=allow_mutation,
+                )
+            except FilesystemPolicyViolation as exc:
+                self._protocol_logger.host_event(
+                    tool.server_name,
+                    exc.event_type,
+                    {
+                        "tool": tool.tool_name,
+                        "global_tool": tool.namespaced_name,
+                        "path_count": exc.path_count,
+                        "reason": str(exc),
+                    },
+                )
+                raise MCPHostError(str(exc)) from exc
+            prepared_arguments = invocation.arguments
+            self._protocol_logger.host_event(
+                tool.server_name,
+                (
+                    "mutation_authorized"
+                    if invocation.mutation_required
+                    else "filesystem_read_allowed"
+                ),
+                {
+                    "tool": tool.tool_name,
+                    "global_tool": tool.namespaced_name,
+                    "path_count": invocation.path_count,
+                    "reason": (
+                        "Explicit mutation authorization accepted."
+                        if invocation.mutation_required
+                        else "Discovered readOnlyHint permits this read-only call."
+                    ),
+                },
+            )
         return client.call_tool(tool.tool_name, prepared_arguments)
 
     def resolve_tool(self, namespaced_name: str) -> RegisteredTool:
@@ -316,6 +364,19 @@ class MCPServerManager:
                     description=description,
                     input_schema=deepcopy(input_schema),
                     annotations=deepcopy(annotations),
+                    extra_fields={
+                        key: deepcopy(value)
+                        for key, value in definition.items()
+                        if key
+                        not in {
+                            "name",
+                            "server",
+                            "tool",
+                            "description",
+                            "inputSchema",
+                            "annotations",
+                        }
+                    },
                 )
             )
             names_seen.add(namespaced_name)

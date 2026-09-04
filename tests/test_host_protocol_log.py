@@ -16,8 +16,11 @@ SOURCE_DIRECTORY = PROJECT_DIRECTORY / "src"
 sys.path.insert(0, str(SOURCE_DIRECTORY))
 
 from pharmacy_mcp.host import (  # noqa: E402
+    BINARY_OMISSION_MARKER,
     DEFAULT_LOG_PATH,
     REDACTION_MARKER,
+    TRUNCATION_MARKER,
+    WRITE_CONTENT_OMISSION_MARKER,
     MCPLogError,
     MCPProtocolLogger,
 )
@@ -184,6 +187,117 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertEqual(entry["method"], "tools/call")
         self.assertEqual(entry["payload"]["token"], REDACTION_MARKER)
         self.assertNotIn("never-show-this", json.dumps(entry))
+
+    def test_large_payload_is_redacted_then_truncated_as_valid_json(self) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "result": {
+                "token": "never-log-this-secret",
+                "items": ["x" * 64 for _ in range(40)],
+            },
+        }
+        original = deepcopy(message)
+        wire_payload = json.dumps(message)
+
+        with MCPProtocolLogger(
+            self.log_path,
+            diagnostic_stream=self.stderr,
+            max_payload_chars=512,
+            max_string_chars=64,
+        ) as logger:
+            logger.inbound("filesystem", wire_payload)
+
+        self.assertEqual(message, original)
+        self.assertEqual(json.dumps(message), wire_payload)
+        entry = self._read_entries()[0]
+        self.assertTrue(entry["payload"]["truncated"])
+        self.assertEqual(entry["payload"]["marker"], TRUNCATION_MARKER)
+        self.assertLessEqual(
+            len(json.dumps(entry["payload"], separators=(",", ":"))),
+            512,
+        )
+        serialized_log = self.log_path.read_text(encoding="utf-8")
+        self.assertNotIn("never-log-this-secret", serialized_log)
+        self.assertIn(REDACTION_MARKER, serialized_log)
+
+    def test_long_strings_and_binary_fields_are_bounded_or_omitted(self) -> None:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "result": {
+                "content": [{"type": "text", "text": "a" * 500}],
+                "data": "base64" * 200,
+                "blob": "binary" * 200,
+            },
+        }
+
+        with MCPProtocolLogger(
+            self.log_path,
+            diagnostic_stream=self.stderr,
+            max_payload_chars=2_048,
+            max_string_chars=80,
+        ) as logger:
+            logger.inbound("filesystem", json.dumps(payload))
+
+        serialized = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(TRUNCATION_MARKER, serialized)
+        self.assertIn(BINARY_OMISSION_MARKER, serialized)
+        self.assertNotIn("base64" * 20, serialized)
+        self.assertNotIn("binary" * 20, serialized)
+
+    def test_filesystem_write_and_edit_bodies_are_not_logged(self) -> None:
+        write_body = "private body that must reach the server"
+        edit_old = "original private paragraph"
+        edit_new = "replacement private paragraph"
+        messages = (
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "tools/call",
+                "params": {
+                    "name": "write_file",
+                    "arguments": {"path": "C:/safe/file.txt", "content": write_body},
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "tools/call",
+                "params": {
+                    "name": "edit_file",
+                    "arguments": {
+                        "path": "C:/safe/file.txt",
+                        "edits": [{"oldText": edit_old, "newText": edit_new}],
+                    },
+                },
+            },
+        )
+        originals = deepcopy(messages)
+
+        with MCPProtocolLogger(
+            self.log_path,
+            diagnostic_stream=self.stderr,
+        ) as logger:
+            for message in messages:
+                logger.outbound("filesystem", json.dumps(message))
+
+        self.assertEqual(messages, originals)
+        serialized = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(WRITE_CONTENT_OMISSION_MARKER, serialized)
+        for protected_text in (write_body, edit_old, edit_new):
+            self.assertNotIn(protected_text, serialized)
+
+    def test_log_limits_reject_booleans_and_out_of_range_values(self) -> None:
+        for options in (
+            {"max_payload_chars": True},
+            {"max_payload_chars": 255},
+            {"max_string_chars": 63},
+            {"max_string_chars": 1_000_001},
+        ):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):
+                    MCPProtocolLogger(self.log_path, **options)
 
     def test_log_open_failure_is_explicit(self) -> None:
         self.directory.write_text("block", encoding="utf-8")

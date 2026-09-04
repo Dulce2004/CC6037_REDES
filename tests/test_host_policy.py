@@ -266,9 +266,9 @@ class ManagerCleanupTests(unittest.TestCase):
                     cwd=root,
                     env=MappingProxyType({}),
                 )
-                for name in ("pharmacy", "git")
+                for name in ("pharmacy", "git", "filesystem")
             )
-            for failing_name in ("pharmacy", "git"):
+            for failing_name in ("pharmacy", "git", "filesystem"):
                 with self.subTest(failing_name=failing_name):
                     logger = MCPProtocolLogger(root / f"{failing_name}.jsonl")
                     try:
@@ -278,7 +278,7 @@ class ManagerCleanupTests(unittest.TestCase):
                         )
                         clients = {
                             name: _RecordingClient(fail_on_stop=name == failing_name)
-                            for name in ("pharmacy", "git")
+                            for name in ("pharmacy", "git", "filesystem")
                         }
                         manager._clients.update(clients)
 
