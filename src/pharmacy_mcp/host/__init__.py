@@ -4,6 +4,7 @@ from .config import (
     DEFAULT_CONFIG_PATH,
     HostConfig,
     HostConfigurationError,
+    RepositoryPolicyConfig,
     StdioServerConfig,
     load_host_config,
 )
@@ -20,6 +21,7 @@ from .protocol_log import (
     MCPProtocolLogger,
     redact_sensitive_data,
 )
+from .policy import RepositoryPolicyViolation, prepare_repository_invocation
 from .stdio_client import (
     HOST_NAME,
     HOST_VERSION,
@@ -49,9 +51,12 @@ __all__ = [
     "MCPServerResponseError",
     "MCPTransportError",
     "RegisteredTool",
+    "RepositoryPolicyConfig",
+    "RepositoryPolicyViolation",
     "ServerSummary",
     "StdioMCPClient",
     "StdioServerConfig",
     "load_host_config",
+    "prepare_repository_invocation",
     "redact_sensitive_data",
 ]

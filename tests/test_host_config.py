@@ -24,7 +24,10 @@ class HostConfigurationTests(unittest.TestCase):
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         self.config_path = runtime_directory / f"host-{uuid4().hex}.json"
+        self.repository_path = runtime_directory / f"git-config-{uuid4().hex}"
+        self.repository_path.mkdir()
         self.addCleanup(self.config_path.unlink, missing_ok=True)
+        self.addCleanup(self.repository_path.rmdir)
 
     def write_config(self, value: object) -> None:
         self.config_path.write_text(
@@ -32,10 +35,13 @@ class HostConfigurationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_default_config_contains_only_local_pharmacy_server(self) -> None:
-        config = load_host_config(DEFAULT_CONFIG_PATH)
+    def test_default_config_contains_pharmacy_and_fixed_git_server(self) -> None:
+        config = load_host_config(
+            DEFAULT_CONFIG_PATH,
+            environ={"MCP_GIT_REPOSITORY_PATH": str(self.repository_path)},
+        )
 
-        self.assertEqual(len(config.servers), 1)
+        self.assertEqual(len(config.servers), 2)
         pharmacy = config.servers[0]
         self.assertEqual(pharmacy.name, "pharmacy")
         self.assertEqual(pharmacy.transport, "stdio")
@@ -46,6 +52,122 @@ class HostConfigurationTests(unittest.TestCase):
             ("-B", "-m", "pharmacy_mcp.server.stdio"),
         )
         self.assertEqual(pharmacy.env["PYTHONPATH"], "src")
+        git = config.servers[1]
+        self.assertEqual(git.name, "git")
+        self.assertEqual(git.command, "uvx")
+        self.assertEqual(
+            git.args,
+            (
+                "--from",
+                "mcp-server-git==2026.8.18",
+                "mcp-server-git",
+                "--repository",
+                str(self.repository_path),
+            ),
+        )
+        self.assertEqual(git.cwd, self.repository_path)
+        self.assertEqual(git.repository_policy.root, self.repository_path)
+        self.assertIn("git_commit", git.repository_policy.mutable_tools)
+        self.assertEqual(config.variables, ("MCP_GIT_REPOSITORY_PATH",))
+
+    def test_required_declared_variable_must_be_present_and_nonempty(self) -> None:
+        self.write_config(
+            {
+                "variables": ["TEST_REPOSITORY"],
+                "servers": [
+                    {
+                        **self.server_config("git"),
+                        "cwd": "${TEST_REPOSITORY}",
+                    }
+                ],
+            }
+        )
+
+        for environment in ({}, {"TEST_REPOSITORY": ""}):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(HostConfigurationError, "missing or empty"):
+                    load_host_config(self.config_path, environ=environment)
+
+    def test_only_explicitly_declared_variables_are_expanded(self) -> None:
+        self.write_config(
+            {
+                "servers": [
+                    {
+                        **self.server_config("git"),
+                        "cwd": "${PATH}",
+                    }
+                ]
+            }
+        )
+
+        with self.assertRaisesRegex(HostConfigurationError, "undeclared"):
+            load_host_config(
+                self.config_path,
+                environ={"PATH": str(self.repository_path)},
+            )
+
+    def test_repository_policy_is_validated_and_canonicalized(self) -> None:
+        self.write_config(
+            {
+                "variables": ["TEST_REPOSITORY"],
+                "servers": [
+                    {
+                        **self.server_config("git"),
+                        "cwd": "${TEST_REPOSITORY}",
+                        "repository_policy": {
+                            "root": "${TEST_REPOSITORY}",
+                            "argument": "repo_path",
+                            "mutable_tools": ["git_add", "git_commit"],
+                        },
+                    }
+                ],
+            }
+        )
+
+        config = load_host_config(
+            self.config_path,
+            environ={"TEST_REPOSITORY": str(self.repository_path)},
+        )
+
+        policy = config.servers[0].repository_policy
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.root, self.repository_path.resolve(strict=True))
+        self.assertEqual(policy.argument_name, "repo_path")
+        self.assertEqual(policy.mutable_tools, frozenset({"git_add", "git_commit"}))
+
+    def test_repository_policy_rejects_missing_duplicate_or_nonexistent_data(
+        self,
+    ) -> None:
+        base = {
+            **self.server_config("git"),
+            "repository_policy": {
+                "root": str(self.repository_path),
+                "mutable_tools": ["git_add"],
+            },
+        }
+        cases = (
+            {**base, "repository_policy": {"root": str(self.repository_path)}},
+            {
+                **base,
+                "repository_policy": {
+                    "root": str(self.repository_path),
+                    "mutable_tools": ["git_add", "git_add"],
+                },
+            },
+            {
+                **base,
+                "repository_policy": {
+                    "root": str(self.repository_path / "missing"),
+                    "mutable_tools": ["git_add"],
+                },
+            },
+        )
+
+        for server in cases:
+            with self.subTest(server=server):
+                self.write_config({"servers": [server]})
+                with self.assertRaises(HostConfigurationError):
+                    load_host_config(self.config_path)
 
     def test_config_supports_multiple_unique_stdio_servers(self) -> None:
         self.write_config(

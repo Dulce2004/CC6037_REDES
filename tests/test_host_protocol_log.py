@@ -161,6 +161,30 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertNotIn("never-show-this", self.stderr.getvalue())
         self.assertIn(REDACTION_MARKER, self.stderr.getvalue())
 
+    def test_local_policy_event_is_distinct_and_redacted(self) -> None:
+        with MCPProtocolLogger(
+            self.log_path,
+            diagnostic_stream=self.stderr,
+        ) as logger:
+            logger.host_event(
+                "git",
+                "mutation_authorized",
+                {
+                    "tool": "git_commit",
+                    "global_tool": "git__git_commit",
+                    "token": "never-show-this",
+                },
+            )
+
+        entry = self._read_entries()[0]
+        self.assertEqual(entry["server"], "git")
+        self.assertEqual(entry["transport"], "stdio")
+        self.assertEqual(entry["direction"], "local")
+        self.assertEqual(entry["message_type"], "mutation_authorized")
+        self.assertEqual(entry["method"], "tools/call")
+        self.assertEqual(entry["payload"]["token"], REDACTION_MARKER)
+        self.assertNotIn("never-show-this", json.dumps(entry))
+
     def test_log_open_failure_is_explicit(self) -> None:
         self.directory.write_text("block", encoding="utf-8")
 

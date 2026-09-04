@@ -121,6 +121,30 @@ class MCPProtocolLogger:
         if self._show_traffic:
             self._write_diagnostic(f"[MCP log] {line}")
 
+    def host_event(
+        self,
+        server_name: str,
+        event_type: str,
+        payload: dict[str, JsonValue],
+        *,
+        transport: str = "stdio",
+        method: str = "tools/call",
+    ) -> None:
+        """Record a local policy decision that was not sent to a server."""
+
+        entry: dict[str, JsonValue] = {
+            "timestamp": _utc_timestamp(),
+            "server": server_name,
+            "transport": transport,
+            "direction": "local",
+            "message_type": event_type,
+            "method": method,
+            "payload": redact_sensitive_data(payload),
+        }
+        line = self._append_entry(entry)
+        if self._show_traffic:
+            self._write_diagnostic(f"[MCP log] {line}")
+
     def close(self) -> None:
         with self._lock:
             if self._file is None:

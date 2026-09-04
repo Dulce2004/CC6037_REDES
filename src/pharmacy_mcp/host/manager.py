@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pharmacy_mcp.jsonrpc.messages import JsonValue
 
 from .config import HostConfig, StdioServerConfig
+from .policy import RepositoryPolicyViolation, prepare_repository_invocation
 from .protocol_log import MCPProtocolLogger
 from .stdio_client import MCPHostError, MCPProtocolError
 from .stdio_client import StdioMCPClient
@@ -27,15 +28,19 @@ class RegisteredTool:
     tool_name: str
     description: str
     input_schema: dict[str, JsonValue]
+    annotations: dict[str, JsonValue] | None = None
 
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
+        result: dict[str, JsonValue] = {
             "name": self.namespaced_name,
             "server": self.server_name,
             "tool": self.tool_name,
             "description": self.description,
             "inputSchema": deepcopy(self.input_schema),
         }
+        if self.annotations is not None:
+            result["annotations"] = deepcopy(self.annotations)
+        return result
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -142,7 +147,10 @@ class MCPServerManager:
                 started_here.append(config.name)
         except Exception:
             for server_name in reversed(started_here):
-                self.stop_server(server_name)
+                try:
+                    self.stop_server(server_name)
+                except Exception:
+                    pass
             raise
 
     def stop_server(self, server_name: str) -> None:
@@ -159,12 +167,23 @@ class MCPServerManager:
             client.stop()
 
     def stop_all(self) -> None:
+        first_error: Exception | None = None
         try:
             for server_name in reversed(tuple(self._clients)):
-                self.stop_server(server_name)
+                try:
+                    self.stop_server(server_name)
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
         finally:
             if self._owns_protocol_logger:
-                self._protocol_logger.close()
+                try:
+                    self._protocol_logger.close()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def list_tools(
         self,
@@ -184,6 +203,8 @@ class MCPServerManager:
         self,
         namespaced_name: str,
         arguments: dict[str, JsonValue],
+        *,
+        allow_mutation: bool = False,
     ) -> JsonValue:
         """Resolve ``server__tool`` and invoke the original server tool name."""
 
@@ -191,7 +212,38 @@ class MCPServerManager:
         client = self._clients.get(tool.server_name)
         if client is None or not client.is_ready:
             raise MCPHostError(f"Server '{tool.server_name}' is not ready.")
-        return client.call_tool(tool.tool_name, arguments)
+        config = self._configs[tool.server_name]
+        prepared_arguments = arguments
+        policy = config.repository_policy
+        if policy is not None:
+            try:
+                prepared_arguments = prepare_repository_invocation(
+                    policy,
+                    tool_name=tool.tool_name,
+                    arguments=arguments,
+                    allow_mutation=allow_mutation,
+                )
+            except RepositoryPolicyViolation as exc:
+                self._protocol_logger.host_event(
+                    tool.server_name,
+                    exc.event_type,
+                    {
+                        "tool": tool.tool_name,
+                        "global_tool": tool.namespaced_name,
+                        "reason": str(exc),
+                    },
+                )
+                raise MCPHostError(str(exc)) from exc
+            if tool.tool_name in policy.mutable_tools:
+                self._protocol_logger.host_event(
+                    tool.server_name,
+                    "mutation_authorized",
+                    {
+                        "tool": tool.tool_name,
+                        "global_tool": tool.namespaced_name,
+                    },
+                )
+        return client.call_tool(tool.tool_name, prepared_arguments)
 
     def resolve_tool(self, namespaced_name: str) -> RegisteredTool:
         """Map one global name back to its server and original tool name."""
@@ -234,10 +286,13 @@ class MCPServerManager:
             tool_name = definition["name"]
             description = definition["description"]
             input_schema = definition["inputSchema"]
+            annotations = definition.get("annotations")
             if not isinstance(tool_name, str):
                 raise MCPProtocolError("Validated tool name changed type.")
             if not isinstance(description, str) or not isinstance(input_schema, dict):
                 raise MCPProtocolError("Validated tool definition changed type.")
+            if annotations is not None and not isinstance(annotations, dict):
+                raise MCPProtocolError("Tool annotations must be an object.")
             if (
                 not _TOOL_NAME_PATTERN.fullmatch(tool_name)
                 or NAMESPACE_SEPARATOR in tool_name
@@ -260,6 +315,7 @@ class MCPServerManager:
                     tool_name=tool_name,
                     description=description,
                     input_schema=deepcopy(input_schema),
+                    annotations=deepcopy(annotations),
                 )
             )
             names_seen.add(namespaced_name)

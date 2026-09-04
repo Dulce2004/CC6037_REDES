@@ -43,6 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Mirror redacted JSONL protocol entries to stderr.",
     )
+    parser.add_argument(
+        "--allow-mutation",
+        action="store_true",
+        help=(
+            "Explicitly authorize configured mutable tools for this invocation; "
+            "repository boundaries still apply."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser(
@@ -123,7 +131,11 @@ def main(
                     tool_arguments = _parse_tool_arguments(arguments.arguments)
                     server_name = manager.server_name_from_namespace(arguments.tool)
                     manager.start_server(server_name)
-                    result = manager.invoke_tool(arguments.tool, tool_arguments)
+                    result = manager.invoke_tool(
+                        arguments.tool,
+                        tool_arguments,
+                        allow_mutation=arguments.allow_mutation,
+                    )
                     _write_json(output_stream, {"result": result})
                     return 0
 

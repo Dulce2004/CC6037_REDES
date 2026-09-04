@@ -10,10 +10,12 @@ external JSON-RPC package.
 
 The current server accepts newline-delimited JSON-RPC messages over standard
 input and returns protocol responses over standard output. A configurable
-terminal host can launch that server as a child process, discover namespaced
-tools, and invoke them while recording the complete MCP exchange in a redacted
-JSONL log. The direct in-memory client and its interactive CLI remain available
-for local demonstrations and tests.
+terminal host can launch that server and the pinned official Git MCP server as
+independent child processes, discover namespaced tools dynamically, and invoke
+them while recording the complete MCP exchange in a redacted JSONL log. The
+host's stdio client, lifecycle, JSON-RPC correlation, routing, and policy checks
+remain manually implemented. The direct in-memory pharmacy client and its
+interactive CLI remain available for local demonstrations and tests.
 
 > **Medical disclaimer:** This project is for education and demonstration only.
 > It does not provide a diagnosis, recommend treatment, or replace advice from a
@@ -36,6 +38,9 @@ The implemented MCP subset supports:
   reversible namespaced tool routing such as `pharmacy__check_stock`.
 - A technical host CLI that lists configured servers, discovers tools, invokes
   tools, and appends redacted MCP traffic to a durable JSONL file.
+- Official external `mcp-server-git==2026.8.18` integration through `uvx`, with
+  dynamically discovered `git__<tool>` names, an exact configured repository
+  boundary, and explicit authorization for mutable tools.
 - JSON-RPC responses and standard error objects with request-ID correlation.
 - Notifications that never produce a JSON-RPC response.
 - Graceful process termination when stdin reaches EOF.
@@ -65,7 +70,8 @@ SQLite; subsequent stock calls read that same state.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
 - Strict local JSON configuration for one or more stdio servers. The committed
-  configuration enables only the local `pharmacy` server.
+  configuration enables local `pharmacy` and the pinned external `git` server.
+  Only explicitly declared environment variables can be substituted.
 - Unit, integration, lifecycle, catalog, transactional order, concurrency, and
   subprocess client/transport tests.
 
@@ -74,17 +80,20 @@ SQLite; subsequent stock calls read that same state.
 ```text
 Terminal host CLI
   -> MCP server manager
-  -> namespaced registry: pharmacy__<tool>
-  -> stdio MCP client
-  -> pharmacy child process
+  -> namespaced registry: <server>__<tool>
+  -> one manual stdio MCP client per configured server
+  -> pharmacy child process + official Git MCP child process
   -> stdin/stdout: one UTF-8 JSON-RPC object per line
-  -> stateful MCP server / tool registry
-  -> pharmacy domain and shared SQLite state
+  -> dynamically discovered server tool registries
+  -> pharmacy domain / SQLite or one bounded disposable Git repository
 ```
 
 The host completes the MCP initialization lifecycle, discovers each enabled
 server's tools, and owns its child processes. It starts children directly with
-`shell=False`; it does not execute configuration through a command shell.
+`shell=False`; it does not execute configuration through a command shell. A
+general repository policy canonicalizes Git's `repo_path`, requires an exact
+match with the configured root, and blocks configured mutable tools unless the
+CLI invocation includes `--allow-mutation`.
 Every outbound MCP request or notification and every inbound response is appended
 to `runtime/mcp-host.jsonl` by default. Machine-readable CLI results are written
 only to stdout. Child diagnostics use stderr; the redacted protocol trace can
@@ -128,10 +137,15 @@ files.
 ## Requirements
 
 - Python 3.12, the version declared for this project.
+- Git and `uvx` for the external Git server. The pinned package itself supports
+  Python 3.10 or newer and is resolved in the uv cache, not installed into this
+  project.
 - PowerShell or a Bash-compatible terminal.
 
-There are no third-party runtime dependencies. `requirements.txt` intentionally
-contains no package requirements, so creating a virtual environment is optional.
+There are no third-party imports in the project's runtime code.
+`requirements.txt` intentionally contains no package requirements. The external
+Git process uses its own MCP SDK in an isolated uv environment; this project does
+not import `mcp`, FastMCP, or `mcp_server_git`.
 
 ## Start the stdio server
 
@@ -170,23 +184,28 @@ PYTHONPATH=src python -m pharmacy_mcp.client.cli
 
 ## Use the configurable terminal host
 
-Run these commands from the repository root. The default configuration starts
-only the local pharmacy server when a command needs it:
+Run these commands from the repository root. The default configuration includes
+Pharmacy and Git, so first point Git at a dedicated existing repository. Never
+use the course project's repository for mutation demonstrations:
 
 ```bash
+export MCP_GIT_REPOSITORY_PATH=/absolute/path/to/disposable-demo-repository
 PYTHONPATH=src python -m pharmacy_mcp.host.cli list-servers
 PYTHONPATH=src python -m pharmacy_mcp.host.cli list-tools
 PYTHONPATH=src python -m pharmacy_mcp.host.cli call-tool pharmacy__check_stock --arguments '{"sku":"MED-ANA-001","branch_id":"zona-5"}'
+PYTHONPATH=src python -m pharmacy_mcp.host.cli call-tool git__git_status --arguments "{\"repo_path\":\"$MCP_GIT_REPOSITORY_PATH\"}"
 ```
 
-In PowerShell, set `$env:PYTHONPATH = "src"` first and then run the same
-`python -m pharmacy_mcp.host.cli ...` commands. Use the global
+In PowerShell, set `$env:PYTHONPATH = "src"` and set
+`$env:MCP_GIT_REPOSITORY_PATH` to the absolute disposable repository path first.
+Then run the same `python -m pharmacy_mcp.host.cli ...` commands. Use the global
 `--config path/to/config.json` option before the subcommand to select another
 local configuration. Use `--log-file path/to/host.jsonl` to change the durable
-log and `--show-log` to mirror its redacted entries to stderr. Global options
-must appear before the subcommand. See the
-[terminal host guide](docs/mcp-host-guide.md) for the complete configuration,
-namespace, logging, redaction, and output contracts.
+log, `--show-log` to mirror its redacted entries to stderr, and
+`--allow-mutation` to authorize one mutable call after human review. Repository
+path checks still apply when mutation is authorized. Global options must appear
+before the subcommand. See the [terminal host guide](docs/mcp-host-guide.md) and
+[safe Git MCP demonstration](docs/git-mcp-demo.md).
 
 ## Run the tests
 
@@ -207,13 +226,15 @@ python -B -m unittest discover -s tests -v
 The suite discovers all current tests instead of relying on a hard-coded test
 count. It includes the real stdio entry point, subprocess-client lifecycle,
 multi-server namespacing, independent server state, protocol logging, and host
-CLI behavior.
+CLI behavior. The identified real integration test launches the exact pinned
+`uvx` command and uses only a generated repository under ignored `runtime/`.
 
 ## Documentation
 
 - [Local MCP server specification](docs/mcp-server-specification.md)
 - [Reproducible stdio demonstration guide](docs/demo-guide.md)
 - [Configurable terminal host guide](docs/mcp-host-guide.md)
+- [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
 
 The specification contains the exact lifecycle, message shapes, method behavior,
 tool schema, result format, and implemented errors. The demonstration guide walks
@@ -238,7 +259,8 @@ through a complete manual handshake and tool call.
 - There is no authentication because the server is a local child process using
   stdio.
 - The host supports only configured local stdio processes. It does not include
-  HTTP, remote servers, Git/Filesystem servers, or an LLM.
+  HTTP, remote servers, Filesystem MCP, or an LLM. Demo file creation therefore
+  happens outside the Git server.
 - Natural-language symptom handling is limited to deterministic controlled
   phrases; there is no LLM interpretation.
 - Interaction and allergy rules are deliberately small, simulated, and
@@ -253,7 +275,7 @@ The following items are planned possibilities, not implemented functionality:
   requires them.
 - Integrate an LLM for natural-language interaction.
 - Add Streamable HTTP and a remote-server deployment.
-- Explore separate Git and Filesystem MCP servers.
+- Integrate a separate Filesystem MCP server for controlled file creation.
 - Capture and analyze later network transports with Wireshark.
 
 ## Technical references
@@ -264,3 +286,5 @@ The following items are planned possibilities, not implemented functionality:
 - [MCP lifecycle, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
 - [MCP transports, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 - [MCP tools, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+- [Official MCP Git server](https://github.com/modelcontextprotocol/servers/tree/main/src/git)
+- [`mcp-server-git` 2026.8.18 on PyPI](https://pypi.org/project/mcp-server-git/2026.8.18/)

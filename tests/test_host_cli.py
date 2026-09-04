@@ -7,13 +7,14 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
 SOURCE_DIRECTORY = PROJECT_DIRECTORY / "src"
 sys.path.insert(0, str(SOURCE_DIRECTORY))
 
-from pharmacy_mcp.host.cli import main  # noqa: E402
+from pharmacy_mcp.host.cli import build_parser, main  # noqa: E402
 
 
 class MCPHostCliTests(unittest.TestCase):
@@ -175,6 +176,51 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(output, {})
         self.assertIn("not registered", diagnostics)
+
+    def test_allow_mutation_is_an_explicit_global_option(self) -> None:
+        arguments = build_parser().parse_args(
+            [
+                "--allow-mutation",
+                "call-tool",
+                "pharmacy__check_stock",
+            ]
+        )
+
+        self.assertTrue(arguments.allow_mutation)
+
+    def test_cli_forwards_explicit_mutation_authorization_to_manager(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("pharmacy_mcp.host.cli.MCPServerManager") as manager_class:
+            manager = manager_class.return_value
+            manager.server_name_from_namespace.return_value = "pharmacy"
+            manager.invoke_tool.return_value = {
+                "content": [{"type": "text", "text": "ok"}]
+            }
+
+            exit_code = main(
+                [
+                    "--config",
+                    str(self.config_path),
+                    "--log-file",
+                    str(self.log_path),
+                    "--allow-mutation",
+                    "call-tool",
+                    "pharmacy__check_stock",
+                    "--arguments",
+                    '{"sku":"MED-ANA-001","branch_id":"zona-5"}',
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(exit_code, 0)
+        manager.invoke_tool.assert_called_once_with(
+            "pharmacy__check_stock",
+            {"sku": "MED-ANA-001", "branch_id": "zona-5"},
+            allow_mutation=True,
+        )
+        manager.stop_all.assert_called_once_with()
 
     def test_jsonl_records_complete_handshake_and_tool_call(self) -> None:
         exit_code, output, diagnostics = self.run_cli(

@@ -1,4 +1,5 @@
 {
+  "variables": ["MCP_GIT_REPOSITORY_PATH"],
   "servers": [
     {
       "name": "pharmacy",
@@ -13,6 +14,34 @@
       "request_timeout_seconds": 10,
       "shutdown_timeout_seconds": 5,
       "enabled": true
+    },
+    {
+      "name": "git",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcp-server-git==2026.8.18",
+        "mcp-server-git",
+        "--repository",
+        "${MCP_GIT_REPOSITORY_PATH}"
+      ],
+      "cwd": "${MCP_GIT_REPOSITORY_PATH}",
+      "env": {},
+      "request_timeout_seconds": 30,
+      "shutdown_timeout_seconds": 10,
+      "enabled": true,
+      "repository_policy": {
+        "root": "${MCP_GIT_REPOSITORY_PATH}",
+        "argument": "repo_path",
+        "mutable_tools": [
+          "git_add",
+          "git_commit",
+          "git_reset",
+          "git_checkout",
+          "git_create_branch"
+        ]
+      }
     }
   ]
 }

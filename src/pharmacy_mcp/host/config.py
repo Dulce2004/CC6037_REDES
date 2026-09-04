@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -27,11 +28,64 @@ _SERVER_KEYS = {
     "request_timeout_seconds",
     "shutdown_timeout_seconds",
     "enabled",
+    "repository_policy",
 }
+_ROOT_KEYS = {"servers", "variables"}
+_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_VARIABLE_REFERENCE_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+_ARGUMENT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-][A-Za-z0-9_-]*$")
+_REPOSITORY_POLICY_KEYS = {"root", "argument", "mutable_tools"}
 
 
 class HostConfigurationError(ValueError):
     """The local host configuration is invalid."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RepositoryPolicyConfig:
+    """Restrict a server's repository argument and mutable tool calls."""
+
+    root: Path
+    argument_name: str
+    mutable_tools: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.root, Path) or not self.root.is_absolute():
+            raise HostConfigurationError(
+                "Repository policy 'root' must resolve to an absolute path."
+            )
+        try:
+            canonical_root = self.root.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise HostConfigurationError(
+                "Repository policy 'root' must be an existing directory."
+            ) from exc
+        if not canonical_root.is_dir():
+            raise HostConfigurationError(
+                "Repository policy 'root' must be an existing directory."
+            )
+        object.__setattr__(self, "root", canonical_root)
+        if (
+            not isinstance(self.argument_name, str)
+            or not _ARGUMENT_NAME_PATTERN.fullmatch(self.argument_name)
+        ):
+            raise HostConfigurationError(
+                "Repository policy 'argument' must be a valid argument name."
+            )
+        if not isinstance(self.mutable_tools, frozenset) or not self.mutable_tools:
+            raise HostConfigurationError(
+                "Repository policy 'mutable_tools' must be a non-empty array."
+            )
+        if not all(
+            isinstance(name, str)
+            and _TOOL_NAME_PATTERN.fullmatch(name)
+            and "__" not in name
+            for name in self.mutable_tools
+        ):
+            raise HostConfigurationError(
+                "Repository policy mutable tool names are invalid."
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -47,6 +101,7 @@ class StdioServerConfig:
     shutdown_timeout_seconds: float = 5.0
     enabled: bool = True
     transport: str = "stdio"
+    repository_policy: RepositoryPolicyConfig | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -83,6 +138,12 @@ class StdioServerConfig:
         _validate_timeout(self.shutdown_timeout_seconds, "shutdown_timeout_seconds")
         if not isinstance(self.enabled, bool):
             raise HostConfigurationError("Server 'enabled' must be a boolean.")
+        if self.repository_policy is not None and not isinstance(
+            self.repository_policy, RepositoryPolicyConfig
+        ):
+            raise HostConfigurationError(
+                "Server 'repository_policy' must be a repository policy."
+            )
 
     @property
     def argv(self) -> tuple[str, ...]:
@@ -94,6 +155,7 @@ class HostConfig:
     """Non-empty server collection with unique names."""
 
     servers: tuple[StdioServerConfig, ...]
+    variables: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.servers, tuple) or not self.servers:
@@ -107,10 +169,25 @@ class HostConfig:
         names = [server.name for server in self.servers]
         if len(names) != len(set(names)):
             raise HostConfigurationError("Server names must be unique.")
+        if (
+            not isinstance(self.variables, tuple)
+            or len(self.variables) != len(set(self.variables))
+            or not all(
+                isinstance(name, str) and _VARIABLE_NAME_PATTERN.fullmatch(name)
+                for name in self.variables
+            )
+        ):
+            raise HostConfigurationError(
+                "Host configuration variables must be unique uppercase names."
+            )
 
 
-def load_host_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> HostConfig:
-    """Read local JSON and resolve ``cwd`` relative to its file."""
+def load_host_config(
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> HostConfig:
+    """Read JSON, expand only declared variables, and validate all servers."""
 
     path = Path(config_path).resolve()
     try:
@@ -118,7 +195,7 @@ def load_host_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> HostConfi
             path.read_text(encoding="utf-8"),
             parse_constant=_reject_json_constant,
         )
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise HostConfigurationError(
             f"Cannot read host configuration '{path}'."
         ) from exc
@@ -128,25 +205,47 @@ def load_host_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> HostConfi
             f"column {exc.colno}."
         ) from exc
 
-    if not isinstance(raw_config, dict) or set(raw_config) != {"servers"}:
+    if not isinstance(raw_config, dict) or not set(raw_config).issubset(_ROOT_KEYS):
         raise HostConfigurationError(
-            "Host configuration must contain only a 'servers' array."
+            "Host configuration may contain only 'servers' and 'variables'."
         )
+    if "servers" not in raw_config:
+        raise HostConfigurationError("Host configuration requires 'servers'.")
+    raw_variables = raw_config.get("variables", [])
+    if not isinstance(raw_variables, list) or not all(
+        isinstance(name, str) and _VARIABLE_NAME_PATTERN.fullmatch(name)
+        for name in raw_variables
+    ):
+        raise HostConfigurationError(
+            "'variables' must be an array of uppercase environment variable names."
+        )
+    if len(raw_variables) != len(set(raw_variables)):
+        raise HostConfigurationError("Host configuration variables must be unique.")
+    declared_variables = tuple(raw_variables)
+    environment = os.environ if environ is None else environ
     raw_servers = raw_config["servers"]
     if not isinstance(raw_servers, list) or not raw_servers:
         raise HostConfigurationError("'servers' must be a non-empty array.")
 
     servers = tuple(
-        _parse_server(raw_server, path.parent, index)
+        _parse_server(
+            raw_server,
+            path.parent,
+            index,
+            declared_variables,
+            environment,
+        )
         for index, raw_server in enumerate(raw_servers)
     )
-    return HostConfig(servers=servers)
+    return HostConfig(servers=servers, variables=declared_variables)
 
 
 def _parse_server(
     value: object,
     config_directory: Path,
     index: int,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
 ) -> StdioServerConfig:
     label = f"servers[{index}]"
     if not isinstance(value, dict) or not all(
@@ -183,13 +282,18 @@ def _parse_server(
     raw_cwd = value.get("cwd", ".")
     if not isinstance(raw_cwd, str) or not raw_cwd.strip():
         raise HostConfigurationError(f"'{label}.cwd' must be a non-empty string.")
-    cwd = (config_directory / raw_cwd).resolve()
+    expanded_cwd = _substitute_variables(
+        raw_cwd, declared_variables, environ, f"{label}.cwd"
+    )
+    cwd = (config_directory / expanded_cwd).resolve()
 
     raw_command = value["command"]
     if raw_command == "${PYTHON_EXECUTABLE}":
         command = sys.executable
     elif isinstance(raw_command, str):
-        command = raw_command
+        command = _substitute_variables(
+            raw_command, declared_variables, environ, f"{label}.command"
+        )
     else:
         raise HostConfigurationError(f"'{label}.command' must be a string.")
 
@@ -197,9 +301,27 @@ def _parse_server(
         name=value["name"],
         transport=value["transport"],
         command=command,
-        args=tuple(raw_args),
+        args=tuple(
+            _substitute_variables(
+                argument,
+                declared_variables,
+                environ,
+                f"{label}.args[{argument_index}]",
+            )
+            for argument_index, argument in enumerate(raw_args)
+        ),
         cwd=cwd,
-        env=MappingProxyType(dict(raw_env)),
+        env=MappingProxyType(
+            {
+                key: _substitute_variables(
+                    env_value,
+                    declared_variables,
+                    environ,
+                    f"{label}.env.{key}",
+                )
+                for key, env_value in raw_env.items()
+            }
+        ),
         request_timeout_seconds=_optional_timeout(
             value,
             "request_timeout_seconds",
@@ -213,7 +335,116 @@ def _parse_server(
             label,
         ),
         enabled=value.get("enabled", True),
+        repository_policy=_parse_repository_policy(
+            value.get("repository_policy"),
+            label,
+            declared_variables,
+            environ,
+        ),
     )
+
+
+def _parse_repository_policy(
+    value: object,
+    label: str,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
+) -> RepositoryPolicyConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) for key in value
+    ):
+        raise HostConfigurationError(
+            f"'{label}.repository_policy' must be an object."
+        )
+    unexpected = sorted(set(value) - _REPOSITORY_POLICY_KEYS)
+    if unexpected:
+        raise HostConfigurationError(
+            f"Unexpected fields in '{label}.repository_policy': "
+            f"{', '.join(unexpected)}."
+        )
+    for required in ("root", "mutable_tools"):
+        if required not in value:
+            raise HostConfigurationError(
+                f"'{label}.repository_policy.{required}' is required."
+            )
+
+    raw_root = value["root"]
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.root' must be a non-empty string."
+        )
+    expanded_root = _substitute_variables(
+        raw_root,
+        declared_variables,
+        environ,
+        f"{label}.repository_policy.root",
+    )
+    root = Path(expanded_root)
+    if not root.is_absolute():
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.root' must be an absolute path."
+        )
+    try:
+        canonical_root = root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.root' must exist."
+        ) from exc
+
+    argument_name = value.get("argument", "repo_path")
+    if not isinstance(argument_name, str):
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.argument' must be a string."
+        )
+    mutable_tools = value["mutable_tools"]
+    if not isinstance(mutable_tools, list):
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.mutable_tools' must be an array."
+        )
+    try:
+        mutable_set = frozenset(mutable_tools)
+    except TypeError as exc:
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.mutable_tools' must contain strings."
+        ) from exc
+    if len(mutable_set) != len(mutable_tools):
+        raise HostConfigurationError(
+            f"'{label}.repository_policy.mutable_tools' must not contain duplicates."
+        )
+    return RepositoryPolicyConfig(
+        root=canonical_root,
+        argument_name=argument_name,
+        mutable_tools=mutable_set,
+    )
+
+
+def _substitute_variables(
+    value: str,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
+    label: str,
+) -> str:
+    def replace(match: re.Match[str]) -> str:
+        variable_name = match.group(1)
+        if variable_name not in declared_variables:
+            raise HostConfigurationError(
+                f"'{label}' references undeclared variable '{variable_name}'."
+            )
+        replacement = environ.get(variable_name)
+        if not isinstance(replacement, str) or not replacement.strip():
+            raise HostConfigurationError(
+                f"Required variable '{variable_name}' is missing or empty."
+            )
+        return replacement
+
+    expanded = _VARIABLE_REFERENCE_PATTERN.sub(replace, value)
+    if "${" in expanded:
+        raise HostConfigurationError(
+            f"'{label}' contains an invalid variable reference."
+        )
+    return expanded
 
 
 def _optional_timeout(
