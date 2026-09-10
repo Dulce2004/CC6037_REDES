@@ -367,6 +367,21 @@ class _FakeClient:
         self.responses = list(responses)
         self.requests: list[dict[str, object]] = []
 
+    @property
+    def provider_name(self):
+        return "anthropic"
+
+    @property
+    def model_name(self):
+        return self.settings.model
+
+    @property
+    def max_tool_rounds(self):
+        return self.settings.max_tool_rounds
+
+    def prepare_tools(self, tools):
+        return tools_for_anthropic(tools)
+
     def create_message(self, *, messages, tools=None, system=None):
         self.requests.append(
             {

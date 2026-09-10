@@ -1,4 +1,4 @@
-"""Visible, sequential Anthropic-to-MCP orchestration loop."""
+"""Visible, sequential provider-neutral LLM-to-MCP orchestration loop."""
 
 from __future__ import annotations
 
@@ -9,16 +9,15 @@ from typing import Callable
 
 from pharmacy_mcp.jsonrpc.messages import JsonValue
 
-from .anthropic import AnthropicAPIError, AnthropicMessage, AnthropicMessagesClient
 from .chat_tools import (
     DEFAULT_MAX_TOOL_RESULT_CHARS,
     ToolConversionError,
-    mcp_result_for_anthropic,
+    mcp_result_for_llm,
     mutation_effect,
     sanitized_argument_summary,
-    tools_for_anthropic,
 )
 from .conversation import ConversationError, ConversationHistory
+from .llm import LLMAPIError, LLMClient, LLMConfigurationError, LLMResponse
 from .manager import MCPServerManager
 from .protocol_log import MCPProtocolLogger
 from .stdio_client import MCPHostError, MCPServerResponseError
@@ -59,12 +58,12 @@ Confirmation = Callable[[str], str]
 
 
 class ChatOrchestrator:
-    """Send conversation state to Claude and execute requested MCP tools."""
+    """Send conversation state to one provider and execute requested MCP tools."""
 
     def __init__(
         self,
         manager: MCPServerManager,
-        client: AnthropicMessagesClient,
+        client: LLMClient,
         *,
         history: ConversationHistory | None = None,
         protocol_logger: MCPProtocolLogger | None = None,
@@ -77,8 +76,16 @@ class ChatOrchestrator:
         self.protocol_logger = protocol_logger
         self.confirmation = confirmation or (lambda prompt: input(prompt))
         self.limits = limits or ChatLimits(
-            max_tool_rounds=client.settings.max_tool_rounds
+            max_tool_rounds=client.max_tool_rounds
         )
+
+    @property
+    def provider_name(self) -> str:
+        return self.client.provider_name
+
+    @property
+    def model_name(self) -> str:
+        return self.client.model_name
 
     def clear(self) -> None:
         self.history.clear()
@@ -87,14 +94,17 @@ class ChatOrchestrator:
     def run_turn(self, user_text: str) -> str:
         try:
             self.history.begin_turn(user_text)
-            anthropic_tools = tools_for_anthropic(self.manager.list_tools())
+            registered_tools = self.manager.list_tools()
+            provider_tools = self.client.prepare_tools(registered_tools)
             self._event(
                 "host",
                 "turn_started",
                 {
                     "input_characters": len(user_text),
-                    "available_tools": len(anthropic_tools),
+                    "available_tools": len(registered_tools),
                     "system_prompt_version": SYSTEM_PROMPT_VERSION,
+                    "provider": self.provider_name,
+                    "model": self.model_name,
                 },
             )
             tool_round = 0
@@ -105,15 +115,20 @@ class ChatOrchestrator:
                     {
                         "round": tool_round,
                         "message_count": len(self.history.messages),
-                        "tool_count": len(anthropic_tools),
+                        "tool_count": len(registered_tools),
+                        "provider": self.provider_name,
+                        "model": self.model_name,
+                        "attempt": 1,
+                        "status": "started",
                     },
                 )
                 response = self.client.create_message(
                     messages=self.history.messages,
-                    tools=anthropic_tools,
+                    tools=provider_tools,
                     system=SYSTEM_PROMPT,
                 )
                 tool_calls = _tool_calls(response)
+                response_metadata = dict(response.log_metadata)
                 self._event(
                     "llm",
                     "response_received",
@@ -123,13 +138,18 @@ class ChatOrchestrator:
                         "content_blocks": len(response.content),
                         "tool_calls": len(tool_calls),
                         "has_request_id": response.request_id is not None,
+                        "provider": self.provider_name,
+                        "model": self.model_name,
+                        "status": "success",
+                        **response_metadata,
                     },
                 )
 
                 if tool_calls:
                     if response.stop_reason != "tool_use":
                         raise ChatError(
-                            "Anthropic returned tools with an incompatible stop reason."
+                            "The LLM provider returned tools with an incompatible "
+                            "stop reason."
                         )
                     _validate_tool_ids(tool_calls)
                     if len(tool_calls) > self.limits.max_tools_per_response:
@@ -163,7 +183,8 @@ class ChatOrchestrator:
 
                 if response.stop_reason == "tool_use":
                     raise ChatError(
-                        "Anthropic stopped for tool use without requesting a tool."
+                        "The LLM provider stopped for tool use without requesting "
+                        "a tool."
                     )
                 if response.stop_reason not in {
                     "end_turn",
@@ -173,12 +194,12 @@ class ChatOrchestrator:
                     "model_context_window_exceeded",
                 }:
                     raise ChatError(
-                        f"Anthropic returned unsupported stop reason "
+                        f"The LLM provider returned unsupported stop reason "
                         f"'{response.stop_reason}'."
                     )
                 final_text = _text_content(response)
                 if not final_text:
-                    raise ChatError("Anthropic returned no final text.")
+                    raise ChatError("The LLM provider returned no final text.")
                 self.history.append_assistant(list(response.content))
                 self.history.finish_turn()
                 self._event(
@@ -193,7 +214,12 @@ class ChatOrchestrator:
                 if response.stop_reason == "max_tokens":
                     return f"{final_text}\n\n[Respuesta detenida por el límite de tokens.]"
                 return final_text
-        except (AnthropicAPIError, ConversationError, ToolConversionError) as exc:
+        except (
+            LLMAPIError,
+            LLMConfigurationError,
+            ConversationError,
+            ToolConversionError,
+        ) as exc:
             self._close_failed_history()
             self._event(
                 "host",
@@ -236,7 +262,7 @@ class ChatOrchestrator:
             allow_mutation = False
             if self.manager.requires_confirmation(tool_name):
                 prompt = (
-                    "\nOperación mutable solicitada por Claude\n"
+                    "\nOperación mutable solicitada por el modelo\n"
                     f"Servidor: {registered.server_name}\n"
                     f"Tool: {registered.tool_name}\n"
                     f"Argumentos: {sanitized_argument_summary(arguments)}\n"
@@ -265,7 +291,7 @@ class ChatOrchestrator:
                 deepcopy(arguments),
                 allow_mutation=allow_mutation,
             )
-            content, is_error = mcp_result_for_anthropic(
+            content, is_error = mcp_result_for_llm(
                 result,
                 max_chars=self.limits.max_tool_result_chars,
             )
@@ -308,7 +334,7 @@ class ChatOrchestrator:
 
     def _finish_without_execution(
         self,
-        response: AnthropicMessage,
+        response: LLMResponse,
         tool_calls: list[dict[str, JsonValue]],
         message: str,
         event_type: str,
@@ -356,7 +382,7 @@ class ChatOrchestrator:
         self.history.discard_active_turn()
 
 
-def _tool_calls(response: AnthropicMessage) -> list[dict[str, JsonValue]]:
+def _tool_calls(response: LLMResponse) -> list[dict[str, JsonValue]]:
     return [
         deepcopy(block)
         for block in response.content
@@ -367,10 +393,10 @@ def _tool_calls(response: AnthropicMessage) -> list[dict[str, JsonValue]]:
 def _validate_tool_ids(blocks: list[dict[str, JsonValue]]) -> None:
     ids = [block.get("id") for block in blocks]
     if len(ids) != len(set(ids)):
-        raise ChatError("Anthropic returned duplicate tool request identifiers.")
+        raise ChatError("The LLM provider returned duplicate tool identifiers.")
 
 
-def _text_content(response: AnthropicMessage) -> str:
+def _text_content(response: LLMResponse) -> str:
     return "\n".join(
         block["text"]
         for block in response.content

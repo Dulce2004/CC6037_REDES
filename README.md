@@ -13,9 +13,10 @@ input and returns protocol responses over standard output. A configurable
 terminal host can launch that server plus the pinned official Git and Filesystem
 MCP servers as independent child processes, discover namespaced tools
 dynamically, and invoke them while recording a bounded, redacted JSONL protocol
-trace. An interactive `chat` command calls Anthropic's non-streaming Messages
-REST API with the Python standard library, keeps session history in memory, and
-executes requested MCP tools through that same manager. The host's HTTP client,
+trace. An interactive `chat` command calls either Gemini's non-streaming
+`generateContent` REST API (the default) or Anthropic's Messages REST API with
+the Python standard library, keeps session history in memory, and executes
+requested MCP tools through that same manager. The host's HTTP clients,
 tool loop, stdio client, lifecycle, JSON-RPC correlation, routing, and policy
 checks remain manually implemented. The direct in-memory pharmacy client and
 its interactive CLI remain available for local demonstrations and tests.
@@ -41,9 +42,9 @@ The implemented MCP subset supports:
   reversible namespaced tool routing such as `pharmacy__check_stock`.
 - A technical host CLI that lists configured servers, discovers tools, invokes
   tools, and appends redacted MCP traffic to a durable JSONL file.
-- An Anthropic-backed terminal chat with dynamically converted tools,
-  multi-tool result correlation, bounded in-memory context, and per-operation
-  confirmation for mutations.
+- A Gemini-first terminal chat with optional Anthropic support, dynamically
+  converted tools, multi-tool result correlation, bounded in-memory context,
+  and per-operation confirmation for mutations.
 - Official external `mcp-server-git==2026.8.18` integration through `uvx`, with
   dynamically discovered `git__<tool>` names, an exact configured repository
   boundary, and explicit authorization for mutable tools.
@@ -90,7 +91,7 @@ SQLite; subsequent stock calls read that same state.
 
 ```text
 Terminal host CLI
-  -> chat orchestrator -> Anthropic Messages REST API
+  -> chat orchestrator -> Gemini generateContent or Anthropic Messages REST API
   -> dynamically converted tool definitions / in-memory conversation
   -> MCP server manager
   -> namespaced registry: <server>__<tool>
@@ -174,8 +175,8 @@ files.
   resolved in npm's user cache and does not create `node_modules` or package
   metadata in this repository.
 - PowerShell or a Bash-compatible terminal.
-- An Anthropic API account with available billing/credits for voluntary live
-  chat use, an API key, and a model identifier available to that account.
+- A Gemini Developer API key for voluntary live chat with the default provider,
+  or Anthropic credentials and a model identifier for the optional provider.
 
 There are no third-party imports in the project's runtime code.
 `requirements.txt` intentionally contains no package requirements. The external
@@ -248,11 +249,13 @@ before the subcommand. See the [terminal host guide](docs/mcp-host-guide.md) and
 The [combined Filesystem and Git demonstration](docs/filesystem-git-mcp-demo.md)
 shows the complete create/read/stage/commit workflow.
 
-For interactive chat, set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, then run
-`python -m pharmacy_mcp.host.cli chat`. The key is required but never stored or
-logged. The model is deliberately required instead of silently pinning one that
-may later be unavailable. Read [the chatbot guide](docs/chatbot-guide.md) before
-using a paid API account or authorizing any mutation.
+For interactive chat with the default provider, set `GEMINI_API_KEY` and run
+`python -B -m pharmacy_mcp.host.cli chat`. The project default model is
+`gemini-3.5-flash-lite`; override it with `GEMINI_MODEL`. To use Anthropic, set
+`LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL`. Keys are
+required only for the selected provider and are never stored or logged. Read
+[the chatbot guide](docs/chatbot-guide.md) before using an API account or
+authorizing any mutation.
 
 ## Run the tests
 
@@ -276,18 +279,18 @@ multi-server namespacing, independent server state, protocol logging, and host
 CLI behavior. Real integrations launch the exact pinned `uvx` and `npx`
 commands and use only generated repositories under ignored `runtime/`; the
 combined test runs all three servers and verifies cleanup.
-Network-free Anthropic tests inject a fake HTTP transport. A separate simulated
-LLM workflow starts all three real MCP processes, preserves conversational
-context, exercises read calls plus rejected and authorized writes, verifies
-multi-tool correlation and logs, then removes its disposable artifacts. No test
-contacts Anthropic or consumes API credits.
+Network-free Gemini and Anthropic tests inject fake HTTP transports. Separate
+simulated LLM workflows start all three real MCP processes, preserve
+conversational context, exercise read calls plus rejected and authorized writes,
+verify multi-tool correlation and safe logs, then remove disposable artifacts.
+No test contacts either provider or consumes API quota or credits.
 
 ## Documentation
 
 - [Local MCP server specification](docs/mcp-server-specification.md)
 - [Reproducible stdio demonstration guide](docs/demo-guide.md)
 - [Configurable terminal host guide](docs/mcp-host-guide.md)
-- [Anthropic chatbot and tool-loop guide](docs/chatbot-guide.md)
+- [Gemini and Anthropic chatbot and tool-loop guide](docs/chatbot-guide.md)
 - [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
 - [Combined Filesystem and Git MCP demonstration](docs/filesystem-git-mcp-demo.md)
 
@@ -315,9 +318,9 @@ through a complete manual handshake and tool call.
   stdio.
 - MCP servers remain local stdio processes; there is no MCP HTTP transport,
   remote Pharmacy server, Git remote operation, web UI, or streaming response.
-- Conversation memory exists only for the current `chat` process. The Anthropic
-  client makes one non-streaming request at a time and intentionally performs no
-  automatic retries.
+- Conversation memory exists only for the current `chat` process. Both provider
+  clients make non-streaming requests. Gemini performs no automatic retries by
+  default; optional retries are low and bounded.
 - Natural-language symptom handling is limited to deterministic controlled
   phrases inside the tool; the LLM does not change its validated rule engine.
 - Interaction and allergy rules are deliberately small, simulated, and
@@ -345,5 +348,7 @@ The following items are planned possibilities, not implemented functionality:
 - [`mcp-server-git` 2026.8.18 on PyPI](https://pypi.org/project/mcp-server-git/2026.8.18/)
 - [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 - [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
+- [Gemini API text generation](https://ai.google.dev/gemini-api/docs/generate-content/text-generation)
+- [Gemini API function calling](https://ai.google.dev/gemini-api/docs/function-calling)
 - [Anthropic API overview](https://platform.claude.com/docs/en/api/overview)
 - [Anthropic client tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)

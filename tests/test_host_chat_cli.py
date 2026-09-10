@@ -52,6 +52,7 @@ class HostChatCliTests(unittest.TestCase):
         self.addCleanup(self.log_path.unlink, missing_ok=True)
         self.credential = f"unit-{uuid4().hex}"
         self.environment = {
+            "LLM_PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": self.credential,
             "ANTHROPIC_MODEL": "test-model",
         }
@@ -80,6 +81,7 @@ class HostChatCliTests(unittest.TestCase):
                 stderr=stderr,
                 environ=self.environment if environment is None else environment,
                 anthropic_transport=transport,
+                gemini_transport=transport,
             )
         return exit_code, stdout.getvalue(), stderr.getvalue(), transport, fake_manager
 
@@ -88,8 +90,8 @@ class HostChatCliTests(unittest.TestCase):
         self.assertEqual(parsed.command, "chat")
 
         for environment, expected in (
-            ({"ANTHROPIC_MODEL": "test-model"}, "API_KEY"),
-            ({"ANTHROPIC_API_KEY": "present"}, "MODEL"),
+            ({"LLM_PROVIDER": "anthropic", "ANTHROPIC_MODEL": "test-model"}, "API_KEY"),
+            ({"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "present"}, "MODEL"),
         ):
             with self.subTest(expected=expected):
                 with patch("pharmacy_mcp.host.cli.MCPServerManager") as manager_class:
@@ -133,13 +135,15 @@ class HostChatCliTests(unittest.TestCase):
             )
         )
         code, output, errors, transport, _ = self.run_chat(
-            "/help\n/servers\n/tools\nfirst\n/clear\nsecond\n/exit\n",
+            "/help\n/provider\n/provider gemini\n/servers\n/tools\nfirst\n/clear\nsecond\n/exit\n",
             [_response("one"), _response("two")],
             manager=manager,
         )
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
         self.assertIn("/clear", output)
+        self.assertIn("Proveedor: anthropic", output)
+        self.assertIn("no puede cambiarse", output)
         self.assertIn("pharmacy__check_stock", output)
         second_payload = json.loads(transport.requests[1].body)
         self.assertEqual(
@@ -158,6 +162,40 @@ class HostChatCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
         self.assertTrue(manager.stopped)
+
+    def test_gemini_is_default_and_does_not_require_anthropic_variables(self) -> None:
+        environment = {"GEMINI_API_KEY": self.credential}
+        code, output, errors, transport, manager = self.run_chat(
+            "hola\n/exit\n",
+            [_gemini_response("respuesta")],
+            environment=environment,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertIn("Proveedor: gemini", output)
+        self.assertIn("Modelo: gemini-3.5-flash-lite", output)
+        self.assertIn("Gemini> respuesta", output)
+        self.assertEqual(len(transport.requests), 1)
+        self.assertTrue(manager.stopped)
+        self.assertNotIn(self.credential, output + errors)
+
+    def test_selected_provider_requires_only_its_own_configuration(self) -> None:
+        cases = (
+            ({"LLM_PROVIDER": "gemini"}, "GEMINI_API_KEY"),
+            ({"LLM_PROVIDER": "invalid", "GEMINI_API_KEY": "present"}, "LLM_PROVIDER"),
+        )
+        for environment, expected in cases:
+            with self.subTest(environment=environment):
+                with patch("pharmacy_mcp.host.cli.MCPServerManager") as manager_class:
+                    code = main(
+                        ["--config", str(self.config_path), "chat"],
+                        stdout=io.StringIO(),
+                        stderr=(errors := io.StringIO()),
+                        environ=environment,
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn(expected, errors.getvalue())
+                manager_class.assert_not_called()
 
     def test_api_error_is_safe_and_next_eof_still_closes(self) -> None:
         response = HTTPResponse(
@@ -252,6 +290,27 @@ def _response(text: str) -> HTTPResponse:
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
                 "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+        ).encode(),
+    )
+
+
+def _gemini_response(text: str) -> HTTPResponse:
+    return HTTPResponse(
+        status=200,
+        headers={"x-goog-request-id": "req-test"},
+        body=json.dumps(
+            {
+                "responseId": "response-test",
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": text}],
+                        },
+                        "finishReason": "STOP",
+                    }
+                ],
             }
         ).encode(),
     )

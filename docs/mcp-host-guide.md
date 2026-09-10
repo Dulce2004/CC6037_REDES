@@ -9,14 +9,15 @@ a reversible global name.
 
 The committed configuration contains the local `pharmacy` server, official
 external `mcp-server-git==2026.8.18`, and official external
-`@modelcontextprotocol/server-filesystem@2026.8.31`. The host also offers an
-optional Anthropic Messages REST client for interactive chat. Anthropic HTTP is
-separate from MCP transport: every MCP server remains a local stdio child, and
-there are still no remote MCP services or Git remotes.
+`@modelcontextprotocol/server-filesystem@2026.8.31`. The host also offers a
+Gemini Developer API REST client for interactive chat, with Anthropic Messages
+as an optional alternative. Provider HTTP is separate from MCP transport: every
+MCP server remains a local stdio child, and there are still no remote MCP
+services or Git remotes.
 
 ```text
 Host CLI
-  -> optional chat orchestrator -> Anthropic Messages API
+  -> optional chat orchestrator -> Gemini or Anthropic REST API
   -> MCPServerManager
       -> registry: <server>__<tool>
       -> StdioMCPClient
@@ -149,14 +150,19 @@ are still closed.
 
 The `chat` command is interactive and does not honor `--allow-mutation` as a
 blanket authorization. It asks before every mutable operation. Configure the
-Anthropic environment and follow the dedicated
+default Gemini provider and follow the dedicated
 [chatbot guide](chatbot-guide.md):
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "..."
-$env:ANTHROPIC_MODEL = "model-available-to-your-account"
-python -m pharmacy_mcp.host.cli chat
+$env:GEMINI_API_KEY = "..."
+python -B -m pharmacy_mcp.host.cli chat
 ```
+
+Set `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL` to
+select the optional Anthropic adapter. Only the selected provider's credentials
+are required. The chat command also supports `/provider` to show the active
+provider and model without exposing a key; switching providers mid-session is
+not supported.
 
 Add the global `--allow-mutation` option before `call-tool` only after reviewing
 the intended change. Without it, configured mutable tools are rejected locally
@@ -398,4 +404,6 @@ the complete three-server workflow and human confirmation point.
 - [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 - [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
 - [MCP lifecycle and version negotiation, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
+- [Gemini generateContent API](https://ai.google.dev/api/generate-content)
+- [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling)
 - [Anthropic Messages API](https://platform.claude.com/docs/en/api/http/messages/create)

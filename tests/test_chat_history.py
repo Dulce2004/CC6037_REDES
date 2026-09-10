@@ -156,6 +156,57 @@ class ConversationHistoryTests(unittest.TestCase):
                 ]
             )
 
+    def test_gemini_thought_signature_survives_copy_and_whole_turn_trimming(self) -> None:
+        history = ConversationHistory(max_messages=6)
+        history.begin_turn("old")
+        history.append_assistant([{"type": "text", "text": "old answer"}])
+        history.finish_turn()
+
+        history.begin_turn("stock")
+        history.reserve(2)
+        history.append_assistant(
+            [
+                {
+                    "type": "tool_use",
+                    "id": "gemini-call-000001",
+                    "name": "pharmacy__check_stock",
+                    "input": {},
+                    "_provider_metadata": {
+                        "gemini": {"thoughtSignature": "opaque-signature"}
+                    },
+                }
+            ]
+        )
+        snapshot = history.messages
+        snapshot[-1]["content"][0]["_provider_metadata"]["gemini"][
+            "thoughtSignature"
+        ] = "changed"
+        self.assertEqual(
+            history.messages[-1]["content"][0]["_provider_metadata"]["gemini"][
+                "thoughtSignature"
+            ],
+            "opaque-signature",
+        )
+        history.append_tool_results(
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "gemini-call-000001",
+                    "content": "ok",
+                }
+            ]
+        )
+        history.append_assistant([{"type": "text", "text": "done"}])
+        history.finish_turn()
+        history.begin_turn("again")
+
+        self.assertEqual(
+            history.messages[1]["content"][0]["_provider_metadata"]["gemini"][
+                "thoughtSignature"
+            ],
+            "opaque-signature",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-"""Fully simulated LLM demonstration over the three real MCP child servers."""
+"""Simulated Gemini workflow over the three real MCP child servers."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from copy import deepcopy
 from pathlib import Path
 from types import MappingProxyType
 from uuid import uuid4
@@ -21,16 +20,16 @@ SOURCE_DIRECTORY = PROJECT_DIRECTORY / "src"
 sys.path.insert(0, str(SOURCE_DIRECTORY))
 
 from pharmacy_mcp.host import (  # noqa: E402
-    AnthropicMessage,
-    AnthropicSettings,
     ChatOrchestrator,
     FilesystemPolicyConfig,
+    GeminiGenerateContentClient,
+    GeminiSettings,
+    HTTPResponse,
     HostConfig,
     MCPProtocolLogger,
     MCPServerManager,
     RepositoryPolicyConfig,
     StdioServerConfig,
-    tools_for_anthropic,
 )
 
 GIT_PACKAGE = "mcp-server-git==2026.8.18"
@@ -39,15 +38,16 @@ FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem@2026.8.31"
 
 @unittest.skipUnless(
     shutil.which("git") and shutil.which("uvx") and shutil.which("npx"),
-    "git, uvx, and npx are required for the simulated chat integration",
+    "git, uvx, and npx are required for the simulated Gemini integration",
 )
-class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
-    def test_complete_fake_llm_workflow_is_safe_stateful_and_cleaned_up(self) -> None:
+class SimulatedGeminiThreeServerTests(unittest.TestCase):
+    def test_gemini_context_tools_signatures_policies_and_cleanup(self) -> None:
         temporary_root = Path(
-            tempfile.mkdtemp(prefix=f"pharmacy-mcp-chat-{uuid4().hex}-")
+            tempfile.mkdtemp(prefix=f"pharmacy-mcp-gemini-{uuid4().hex}-")
         ).resolve(strict=True)
         temporary_parent = Path(tempfile.gettempdir()).resolve(strict=True)
         processes = {}
+        credential = f"simulated-{uuid4().hex}"
         try:
             repository = temporary_root / "repository"
             repository.mkdir()
@@ -69,75 +69,84 @@ class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
                 ),
                 protocol_logger=logger,
             )
-            fake = _FakeLLM(
+            signature = "opaque-thought-signature"
+            transport = _GeminiQueueTransport(
                 [
                     _text("Alan Turing fue un matemático británico."),
                     _text("Nació el 23 de junio de 1912."),
-                    _tools(
-                        _use(
+                    _calls(
+                        _call(
                             "stock",
                             "pharmacy__check_stock",
                             {"sku": "MED-ANA-001", "branch_id": "zona-5"},
+                            signature=signature,
                         )
                     ),
                     _text("Hay inventario disponible."),
-                    _tools(
-                        _use(
+                    _calls(
+                        _call(
                             "read",
                             "filesystem__read_text_file",
                             {"path": str(seed)},
                         )
                     ),
                     _text("Leí el archivo."),
-                    _tools(
-                        _use(
-                            "write-no",
-                            "filesystem__write_file",
-                            {"path": str(rejected), "content": "not written"},
-                        )
-                    ),
-                    _text("La escritura fue rechazada."),
-                    _tools(
-                        _use(
-                            "write-yes",
-                            "filesystem__write_file",
-                            {"path": str(approved), "content": "approved\n"},
-                        )
-                    ),
-                    _text("La escritura fue autorizada."),
-                    _tools(
-                        _use(
+                    _calls(
+                        _call(
                             "git-status",
                             "git__git_status",
                             {"repo_path": str(repository)},
                         )
                     ),
-                    _text("Git reporta archivos sin seguimiento."),
-                    _tools(
-                        _use(
+                    _text("Git respondió correctamente."),
+                    _calls(
+                        _call(
                             "multi-stock",
                             "pharmacy__check_stock",
                             {"sku": "MED-ANA-001", "branch_id": "zona-5"},
                         ),
-                        _use(
+                        _call(
                             "multi-read",
                             "filesystem__read_text_file",
                             {"path": str(seed)},
                         ),
-                        _use(
+                        _call(
                             "multi-git",
                             "git__git_status",
                             {"repo_path": str(repository)},
                         ),
                     ),
                     _text("Las tres consultas terminaron."),
+                    _calls(
+                        _call(
+                            "write-no",
+                            "filesystem__write_file",
+                            {"path": str(rejected), "content": "not written"},
+                        )
+                    ),
+                    _text("La escritura fue rechazada."),
+                    _calls(
+                        _call(
+                            "write-yes",
+                            "filesystem__write_file",
+                            {"path": str(approved), "content": "approved\n"},
+                        )
+                    ),
+                    _text("La escritura fue autorizada."),
                 ]
+            )
+            client = GeminiGenerateContentClient(
+                GeminiSettings(api_key=credential),
+                transport=transport,
+                event_sink=lambda event, payload: logger.orchestrator_event(
+                    "llm", event, payload
+                ),
             )
             answers = iter(("no", "sí"))
             prompts = []
             orchestrator = ChatOrchestrator(
                 manager,
-                fake,
+                client,
                 protocol_logger=logger,
                 confirmation=lambda prompt: prompts.append(prompt) or next(answers),
             )
@@ -150,46 +159,86 @@ class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
                         f"diagnostics: {diagnostics.getvalue()}"
                     )
                 processes = {
-                    name: client._process for name, client in manager._clients.items()
+                    name: mcp_client._process
+                    for name, mcp_client in manager._clients.items()
                 }
                 self.assertEqual(set(processes), {"pharmacy", "git", "filesystem"})
                 self.assertIn("Turing", orchestrator.run_turn("¿Quién fue Alan Turing?"))
                 self.assertIn("1912", orchestrator.run_turn("¿En qué fecha nació?"))
                 orchestrator.run_turn("Consulta el stock")
                 orchestrator.run_turn("Lee el archivo")
-                orchestrator.run_turn("Intenta escribir y rechazaré")
-                orchestrator.run_turn("Intenta otra escritura")
                 orchestrator.run_turn("Consulta Git")
-                final = orchestrator.run_turn("Consulta los tres sistemas")
-                self.assertEqual(final, "Las tres consultas terminaron.")
+                self.assertEqual(
+                    orchestrator.run_turn("Consulta los tres sistemas"),
+                    "Las tres consultas terminaron.",
+                )
+                orchestrator.run_turn("Intenta escribir y rechazaré")
+                final = orchestrator.run_turn("Intenta otra escritura")
+                self.assertEqual(final, "La escritura fue autorizada.")
 
-                second_messages = fake.requests[1]["messages"]
-                self.assertEqual(second_messages[0]["content"], "¿Quién fue Alan Turing?")
-                self.assertEqual(second_messages[1]["role"], "assistant")
+                second_payload = json.loads(transport.requests[1].body)
+                self.assertEqual(second_payload["contents"][0]["parts"][0]["text"], "¿Quién fue Alan Turing?")
+                self.assertEqual(second_payload["contents"][1]["role"], "model")
+                tool_payloads = [
+                    json.loads(request.body)
+                    for request in transport.requests
+                    if b"functionResponse" in request.body
+                ]
+                self.assertTrue(any(signature in json.dumps(payload) for payload in tool_payloads))
+                multiple = next(
+                    payload
+                    for payload in tool_payloads
+                    if any(
+                        len(content.get("parts", [])) == 3
+                        and all("functionResponse" in part for part in content["parts"])
+                        for content in payload["contents"]
+                    )
+                )
+                response_parts = next(
+                    content["parts"]
+                    for content in multiple["contents"]
+                    if len(content.get("parts", [])) == 3
+                    and all("functionResponse" in part for part in content["parts"])
+                )
+                self.assertEqual(
+                    [part["functionResponse"]["id"] for part in response_parts],
+                    ["multi-stock", "multi-read", "multi-git"],
+                )
                 self.assertFalse(rejected.exists())
                 self.assertEqual(approved.read_text(encoding="utf-8"), "approved\n")
                 self.assertEqual(len(prompts), 2)
-                multi_results = fake.requests[-1]["messages"][-1]["content"]
-                self.assertEqual(
-                    [block["tool_use_id"] for block in multi_results],
-                    ["multi-stock", "multi-read", "multi-git"],
-                )
+
                 entries = [
                     json.loads(line)
                     for line in log_path.read_text(encoding="utf-8").splitlines()
                 ]
-                self.assertTrue({"llm", "mcp", "policy", "host"}.issubset(
-                    {entry["category"] for entry in entries}
-                ))
-                self.assertTrue(any(
-                    entry["message_type"] == "mutation_rejected" for entry in entries
-                ))
-                self.assertTrue(any(
-                    entry["message_type"] == "mutation_authorized" for entry in entries
-                ))
+                self.assertTrue(
+                    {"llm", "mcp", "policy", "host"}.issubset(
+                        {entry["category"] for entry in entries}
+                    )
+                )
                 serialized_log = log_path.read_text(encoding="utf-8")
+                self.assertNotIn(signature, serialized_log)
+                self.assertNotIn(credential, serialized_log)
                 self.assertNotIn("¿Quién fue Alan Turing?", serialized_log)
-                self.assertNotIn("Nació el 23 de junio", serialized_log)
+                self.assertTrue(
+                    any(
+                        entry["message_type"] == "gemini_request_finished"
+                        for entry in entries
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        entry["message_type"] == "mutation_rejected"
+                        for entry in entries
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        entry["message_type"] == "mutation_authorized"
+                        for entry in entries
+                    )
+                )
             finally:
                 try:
                     manager.stop_all()
@@ -197,7 +246,9 @@ class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
                     logger.close()
         finally:
             if processes:
-                self.assertTrue(all(process.poll() is not None for process in processes.values()))
+                self.assertTrue(
+                    all(process.poll() is not None for process in processes.values())
+                )
             if temporary_root.parent.resolve(strict=True) != temporary_parent:
                 raise AssertionError("Refusing to remove an unexpected directory")
             if temporary_root.exists():
@@ -205,56 +256,51 @@ class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
         self.assertFalse(temporary_root.exists())
 
 
-class _FakeLLM:
+class _GeminiQueueTransport:
     def __init__(self, responses) -> None:
-        self.settings = AnthropicSettings(api_key="simulated", model="simulated-model")
         self.responses = list(responses)
         self.requests = []
 
-    @property
-    def provider_name(self):
-        return "anthropic"
-
-    @property
-    def model_name(self):
-        return self.settings.model
-
-    @property
-    def max_tool_rounds(self):
-        return self.settings.max_tool_rounds
-
-    def prepare_tools(self, tools):
-        return tools_for_anthropic(tools)
-
-    def create_message(self, *, messages, tools=None, system=None):
-        self.requests.append(
-            {
-                "messages": deepcopy(messages),
-                "tools": deepcopy(tools),
-                "system": system,
-            }
-        )
+    def __call__(self, request):
+        self.requests.append(request)
+        if not self.responses:
+            raise AssertionError("Unexpected simulated Gemini request")
         return self.responses.pop(0)
 
 
-def _text(value: str) -> AnthropicMessage:
-    return AnthropicMessage(
-        message_id="simulated-text",
-        content=({"type": "text", "text": value},),
-        stop_reason="end_turn",
+def _text(value: str) -> HTTPResponse:
+    return _response([{"text": value}], finish_reason="STOP")
+
+
+def _calls(*parts) -> HTTPResponse:
+    return _response(list(parts), finish_reason="STOP")
+
+
+def _call(identifier: str, name: str, arguments: dict[str, object], *, signature=None):
+    part = {
+        "functionCall": {"id": identifier, "name": name, "args": arguments}
+    }
+    if signature is not None:
+        part["thoughtSignature"] = signature
+    return part
+
+
+def _response(parts, *, finish_reason: str) -> HTTPResponse:
+    return HTTPResponse(
+        status=200,
+        headers={"x-goog-request-id": "simulated-request"},
+        body=json.dumps(
+            {
+                "responseId": f"response-{uuid4().hex}",
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": parts},
+                        "finishReason": finish_reason,
+                    }
+                ],
+            }
+        ).encode(),
     )
-
-
-def _tools(*blocks) -> AnthropicMessage:
-    return AnthropicMessage(
-        message_id="simulated-tools",
-        content=tuple(blocks),
-        stop_reason="tool_use",
-    )
-
-
-def _use(identifier: str, name: str, arguments: dict[str, object]):
-    return {"type": "tool_use", "id": identifier, "name": name, "input": arguments}
 
 
 def _pharmacy_config(database_path: Path) -> StdioServerConfig:

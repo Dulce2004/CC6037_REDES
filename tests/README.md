@@ -23,9 +23,13 @@ safe missing creation targets, siblings, `..`, Windows case handling,
 symlink/junction escapes, conservative annotations, and content-free policy
 logs. Logging tests verify redaction-before-truncation, bounded-payload markers,
 binary omission, and write/edit body omission without modifying wire messages.
-Anthropic client tests inject a transport and verify the URL, POST body,
-authentication shape, stable API version, response limits, request IDs, and
-safe HTTP/timeout/connection errors without network access or credentials.
+Gemini and Anthropic client tests inject transports and verify URLs, POST
+bodies, authentication shape, response limits, request IDs, and safe
+HTTP/timeout/connection errors without network access or credentials. Gemini
+coverage also checks provider selection, model normalization, dynamic function
+declarations, `functionCall`/`functionResponse` correlation, fallback IDs,
+thought-signature preservation, optional bounded retries, and blocked or
+malformed responses.
 Conversation and orchestration tests cover complete context, `/clear`, safe
 history trimming, dynamic Pharmacy/Git/Filesystem schemas, single and multiple
 tool calls, MCP and JSON-RPC errors, bounded media/results, tool-round limits,
@@ -39,5 +43,8 @@ Filesystem, commits through Git, checks the protocol log and process shutdown,
 and removes only its generated root. External server integration tests use local
 stdio; first executions may need network access only to populate external uv and
 npm user caches.
-The simulated chatbot integration uses a fake LLM while starting all three real
-MCP processes; no test calls Anthropic or consumes credits.
+The simulated chatbot integrations use fake Gemini HTTP responses and
+normalized fake Anthropic responses while starting all three real MCP
+processes. They cover general conversation, context, Pharmacy, Git, Filesystem,
+multiple calls, mutation decisions, safe logging, and process cleanup. No test
+calls either provider or consumes quota or credits.

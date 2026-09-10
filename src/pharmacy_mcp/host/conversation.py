@@ -1,4 +1,4 @@
-"""In-memory Anthropic conversation history with safe turn trimming."""
+"""Provider-neutral in-memory conversation history with safe turn trimming."""
 
 from __future__ import annotations
 
@@ -181,6 +181,9 @@ def _validate_assistant_content(content: object) -> None:
             or not isinstance(block.get("input"), dict)
         ):
             raise ConversationError("Assistant tool use is invalid.")
+        metadata = block.get("_provider_metadata")
+        if metadata is not None and not _valid_provider_metadata(metadata):
+            raise ConversationError("Assistant provider metadata is invalid.")
 
 
 def _validate_tool_results(blocks: object, expected_ids: list[object]) -> None:
@@ -218,3 +221,15 @@ def _validate_limit(value: object, name: str, minimum: int, maximum: int) -> Non
         raise ConversationError(
             f"'{name}' must be an integer from {minimum} through {maximum}."
         )
+
+
+def _valid_provider_metadata(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {"gemini"}:
+        return False
+    gemini = value.get("gemini")
+    return (
+        isinstance(gemini, dict)
+        and set(gemini) == {"thoughtSignature"}
+        and isinstance(gemini.get("thoughtSignature"), str)
+        and bool(gemini["thoughtSignature"])
+    )

@@ -1,4 +1,4 @@
-"""Dynamic MCP-to-Anthropic tool conversion and bounded result rendering."""
+"""Dynamic MCP tool conversion and bounded provider result rendering."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def tools_for_anthropic(
     return converted
 
 
-def mcp_result_for_anthropic(
+def mcp_result_for_llm(
     result: JsonValue,
     *,
     max_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS,
@@ -98,6 +98,16 @@ def mcp_result_for_anthropic(
                 rendered_parts.append("[UNSUPPORTED MCP CONTENT OMITTED]")
         rendered = "\n".join(rendered_parts)
     return _bounded_text(rendered, max_chars), is_error
+
+
+def mcp_result_for_anthropic(
+    result: JsonValue,
+    *,
+    max_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS,
+) -> tuple[str, bool]:
+    """Backward-compatible name for the provider-neutral result renderer."""
+
+    return mcp_result_for_llm(result, max_chars=max_chars)
 
 
 def sanitized_argument_summary(

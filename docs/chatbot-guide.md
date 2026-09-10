@@ -1,197 +1,281 @@
-# Anthropic Chat and MCP Tool Loop
+# Gemini and Anthropic Chat with MCP Tools
 
 ## Scope
 
-The `chat` command is a terminal-only integration between Anthropic's Messages
-API and the existing manual MCP host. It does not replace JSON-RPC, the stdio
-clients, the server manager, namespaced registration, or any Git/Filesystem
-policy. It adds no SDK or third-party HTTP package and does not provide
-streaming, automatic retries, persistent memory, a web interface, or remote MCP.
+The terminal `chat` command connects one selected LLM provider to the existing
+manual MCP host. Gemini Developer API is the default and recommended provider;
+Anthropic Messages remains an optional alternative. Both integrations use REST
+through Python's standard library. There is no Google or Anthropic SDK, agent
+framework, streaming transport, persistent conversation memory, or remote MCP
+server.
 
 ```text
 terminal input
-  -> ChatOrchestrator (system prompt version pharmacy-mcp-chat-v1)
-      -> AnthropicMessagesClient -> POST /v1/messages
-      <- assistant text and/or tool_use blocks
+  -> ChatOrchestrator (shared history, limits, confirmations, and tool loop)
+      -> selected REST adapter: Gemini (default) or Anthropic
+      <- normalized text and tool_use blocks
       -> MCPServerManager -> <server>__<tool> -> local stdio child
-      <- MCP result -> bounded tool_result -> Anthropic
-  <- final assistant text
+      <- MCP result -> bounded tool_result -> selected REST adapter
+  <- final model text
 ```
 
-## Anthropic REST configuration
+The JSON-RPC implementation, stdio clients, namespaced registry, Pharmacy
+server, Git/Filesystem policies, and mutation confirmation rules are shared and
+unchanged. No provider-specific condition exists inside an MCP tool.
 
-The client performs one non-streaming `POST` to
-`https://api.anthropic.com/v1/messages`. It sends `x-api-key`,
-`anthropic-version: 2023-06-01`, `content-type: application/json`, and no beta
-headers. The JSON body contains the configured `model`, `max_tokens`, complete
-in-memory `messages`, the short versioned `system` prompt, and dynamically
-discovered `tools` when any server is available.
+## Provider selection
 
-Environment variables:
+`LLM_PROVIDER` accepts only `gemini` or `anthropic`, ignoring surrounding
+whitespace and letter case. It defaults to `gemini`. Provider selection happens
+before any MCP child starts and cannot change during a session.
+
+| Provider | Required variables | Model behavior |
+| --- | --- | --- |
+| Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` defaults to the project choice `gemini-3.5-flash-lite`. |
+| Anthropic | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | No model is silently selected; use an identifier available to the account. |
+
+Gemini configuration never requires or reads Anthropic credentials. Anthropic
+configuration never requires a Gemini credential.
+
+## Gemini REST configuration
+
+The manual client sends a non-streaming request to:
+
+```text
+POST https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent
+```
+
+Headers are `Content-Type: application/json`, `Accept: application/json`, and
+`x-goog-api-key`. The credential appears only in that header: it is absent from
+the URL, JSON body, logs, object representations, and safe errors.
 
 | Variable | Required | Default and validation |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | yes | No default. It is never placed in configuration, output, logs, or exception text. |
-| `ANTHROPIC_MODEL` | yes | No default. Choose a current model identifier available to the API account. |
-| `ANTHROPIC_BASE_URL` | no | `https://api.anthropic.com`. HTTPS is mandatory except for an explicit `http://localhost`, `127.0.0.1`, or `::1` simulator. |
-| `ANTHROPIC_MAX_TOKENS` | no | `1024`; integer from 1 through 32,000. |
-| `ANTHROPIC_HTTP_TIMEOUT_SECONDS` | no | `30`; finite number from 0.1 through 300. |
-| `MCP_MAX_TOOL_ROUNDS` | no | `8`; integer from 1 through 32. |
+| `LLM_PROVIDER` | no | `gemini`; only `gemini` or `anthropic`. |
+| `GEMINI_API_KEY` | for Gemini | No default; must be non-empty. |
+| `GEMINI_MODEL` | no | `gemini-3.5-flash-lite`. A single optional `models/` prefix is removed. Additional slashes, traversal, query strings, fragments, and incompatible characters are rejected. |
+| `GEMINI_BASE_URL` | no | `https://generativelanguage.googleapis.com`. HTTPS is mandatory except for explicit localhost simulators. Credentials, query strings, and fragments are rejected. |
+| `GEMINI_MAX_OUTPUT_TOKENS` | no | `1024`; integer from 1 through 32,000. |
+| `GEMINI_HTTP_TIMEOUT_SECONDS` | no | `30`; finite number from 0.1 through 300. |
+| `GEMINI_MAX_RETRIES` | no | `0`; integer from 0 through 3. |
+| `MCP_MAX_TOOL_ROUNDS` | no | `8`; integer from 1 through 32. Shared by both providers. |
 
-The API key and model are validated before any MCP child is started. `.env`
-files remain ignored, and the application does not load them. The base URL is
-intended only for an explicitly selected compatible endpoint or local test
-server; tests normally inject an in-memory transport and open no socket.
+The request body contains `contents`, a versioned `systemInstruction`,
+`generationConfig.maxOutputTokens`, and a `tools` array only when MCP tools are
+available. The response is limited to 2,000,000 bytes and every HTTP stream is
+closed. The injectable transport used by tests opens no network connection.
 
-## Dynamic tools and the sequential loop
+Retries are disabled by default. If explicitly enabled, only connection errors,
+timeouts, 408, 429, and selected 5xx responses are retried. `Retry-After` is
+honored within a 30-second cap; otherwise bounded exponential backoff is used.
+The client never retries 400, 401, 403, or 404. A timeout error warns that the
+request may already have been processed.
 
-At session start the manager attempts every enabled server and keeps those that
-succeed. Failures appear on stderr while `/servers` shows partial availability.
-The global registry is converted in deterministic order. Each Anthropic tool
-contains only:
+## Anthropic alternative
+
+Select Anthropic explicitly with `LLM_PROVIDER=anthropic`. Its existing client
+continues to use `POST https://api.anthropic.com/v1/messages`,
+`anthropic-version: 2023-06-01`, `x-api-key`, and a configured model.
+
+| Variable | Required | Default |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | yes | none |
+| `ANTHROPIC_MODEL` | yes | none |
+| `ANTHROPIC_BASE_URL` | no | `https://api.anthropic.com` |
+| `ANTHROPIC_MAX_TOKENS` | no | `1024` |
+| `ANTHROPIC_HTTP_TIMEOUT_SECONDS` | no | `30` |
+
+Private Gemini metadata is stripped when producing an Anthropic request.
+
+## Gemini content and function adaptation
+
+The shared history uses `user` and `assistant` roles. Gemini receives them as
+`user` and `model`, with every content value represented as a `parts` array.
+
+| Internal block | Gemini part |
+| --- | --- |
+| Text | `{"text":"..."}` |
+| `tool_use` | `{"functionCall":{"id":"...","name":"...","args":{}}}` |
+| Successful `tool_result` | `{"functionResponse":{"id":"...","name":"...","response":{"result":"..."}}}` |
+| Error `tool_result` | `{"functionResponse":{"id":"...","name":"...","response":{"error":"..."}}}` |
+
+The host correlates each `tool_use_id` with its earlier function name before it
+constructs `functionResponse`. Missing correlation fails locally before an HTTP
+request. Provider IDs are preserved exactly. If Gemini omits an ID, the client
+creates a deterministic session-local ID such as `gemini-call-000001`; timestamp
+alone is never used. Duplicate IDs in one response are rejected.
+
+MCP tools are discovered dynamically and converted in stable registry order:
 
 ```json
 {
-  "name": "pharmacy__check_stock",
-  "description": "The description discovered through tools/list.",
-  "input_schema": {"type": "object"}
+  "functionDeclarations": [
+    {
+      "name": "pharmacy__check_stock",
+      "description": "Description returned by tools/list.",
+      "parametersJsonSchema": {"type": "object"}
+    }
+  ]
 }
 ```
 
-MCP `outputSchema`, annotations, server metadata, and internal names are not sent
-as extra Anthropic fields. The host still retains annotations locally for policy
-decisions. Pharmacy, Git, and Filesystem tool names are never hardcoded into the
-conversion.
+The `server__tool` namespace and schema are copied without mutation. MCP
+annotations, `outputSchema`, execution fields, and internal server metadata are
+not sent as Gemini function declaration fields. Invalid or duplicate tools fail
+clearly. If no tools are available, the `tools` member is omitted.
 
-When Claude returns `tool_use`, the host stores the complete assistant content,
-including adjacent text. It executes every requested tool sequentially, builds
-one correlated `tool_result` per `tool_use_id`, preserves response order, places
-all results in one user message, and calls Anthropic again. Sequential execution
-is deliberate: Pharmacy shares mutable inventory, while Filesystem and Git
-operations may depend on earlier calls. The loop ends at final text or a safe
-limit; it does not promise parallel execution.
+## Thought signatures
 
-`structuredContent` is serialized first when present. Otherwise text from MCP
-`content` is used. `isError: true`, JSON-RPC failures, unknown tools, local
-policy failures, and unexpected tool exceptions become distinguishable error
-tool-results rather than invented successes. Binary/media blocks and string
-`data` or `blob` fields are replaced by an omission marker.
+Gemini may return a `thoughtSignature` beside a `functionCall`. The adapter
+stores it as private metadata on that normalized tool block and returns it
+unchanged beside the same call when reconstructing `contents`. It is never
+invented, shown as assistant text, logged, included in mutation prompts, or sent
+to Anthropic. Defensive history copies and whole-turn trimming retain it.
 
-Safety limits are 8 tool rounds by default, 16 calls in one assistant response,
-12,000 characters per result sent to Claude, 8,000 characters per user input,
-2,000,000 bytes per HTTP response, and 48 in-memory messages. Use
-`chat --history-max-messages N` to change the last value. When old context must
-be removed, complete turns are discarded; an assistant `tool_use` is never
-separated from its following user `tool_result`. If an active exchange cannot
-fit safely, the turn ends with a clear error. Reaching a tool limit produces an
-error result for every unexecuted request, performs no further tool/API call,
-and leaves consistent local history.
+Thought-only parts are not displayed as normal text. A response containing only
+thought parts is treated as an empty response. This manual preservation is
+important because the Gemini API is stateless and REST callers must return
+thought signatures themselves.
 
-## Conversation commands
+## Shared tool loop and conversation
 
-Run `python -m pharmacy_mcp.host.cli chat`, then enter normal text or:
+The orchestrator sends the complete retained history, stores the complete
+normalized model response, executes requested MCP tools sequentially, appends
+all correlated results in one user message, and asks the same provider for the
+next response. Function calls continue the loop even when Gemini's
+`finishReason` is `STOP`; the presence of calls, not the finish reason alone,
+controls execution.
 
-- `/help` — show the session commands;
-- `/tools` — show currently registered namespaced tools;
-- `/servers` — show each configured server's ready, stopped, or failed state;
-- `/clear` — erase all in-memory conversation history;
-- `/exit` — close every server and exit.
+Pharmacy, Git, and Filesystem continue to support successful results,
+`isError`, JSON-RPC failures, policy rejection, unknown tools, multiple calls,
+and mutation confirmation. Limits are 8 tool rounds by default, 16 calls per
+model response, 12,000 characters per tool result, 8,000 characters per user
+input, and 48 retained messages. Binary/media results are replaced with a safe
+marker. Whole completed turns are discarded first; a function call is never
+separated from its result.
 
-Blank lines are ignored. EOF and `Ctrl+C` close the session safely. Final model
-text goes to stdout; API/server diagnostics and controlled errors go to stderr.
-Conversation messages never persist to disk. For example, after asking who Alan
-Turing was, a following question asking his birth date sends the original user
-question and complete assistant answer before the new question. `/clear`
-removes that context.
+## Terminal commands
+
+Run from the repository root after setting the selected provider configuration:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -B -m pharmacy_mcp.host.cli chat
+```
+
+Startup prints only the selected provider, normalized model, available MCP
+servers, and a short help hint. During the session:
+
+- `/help` — show commands;
+- `/provider` — show the current provider and model without credentials;
+- `/tools` — list registered namespaced MCP tools;
+- `/servers` — show server state;
+- `/clear` — remove all in-memory conversation context;
+- `/exit` — close all servers and exit.
+
+`/provider gemini` or any other attempt to switch provider is rejected locally.
+Blank input is ignored. EOF and `Ctrl+C` close the session safely.
 
 ## Mutation confirmation
 
-Read-only operations run automatically only when current policy classifies them
-as read-only. `pharmacy__create_order` always requires confirmation because it
-creates an order and changes stock. Configured Git mutations and Filesystem
-tools without unambiguous read-only annotations also require confirmation.
-
-Before each mutable call the terminal displays the server, original tool name,
-a bounded/redacted argument summary, expected effect, and:
+Read-only operations run automatically. `pharmacy__create_order`, configured
+Git mutations, and Filesystem tools without an unambiguous read-only annotation
+require confirmation individually. The terminal shows the server, original tool
+name, bounded redacted argument summary, expected effect, and:
 
 ```text
 ¿Autorizar esta operación? [s/N]
 ```
 
-Only `s`, `sí`, `y`, or `yes` (case-insensitive) authorizes that single call.
-Any other input rejects it, sends an error `tool_result` back to Claude, and
-never calls the MCP server. The technical `--allow-mutation` option remains for
-one manual `call-tool`; it never silently authorizes a live chat session.
-Configured repository and path boundaries remain mandatory even after approval.
+Only `s`, `sí`, `y`, or `yes` authorizes that one call. Rejection sends an error
+tool result to the model and never reaches the MCP server. Repository and
+Filesystem boundaries remain mandatory after approval.
 
-## Logs, credentials, and errors
+## Logs, errors, privacy, and quota
 
-The existing JSONL log remains `runtime/mcp-host.jsonl` by default and can be
-changed with the global `--log-file` option. MCP wire traffic keeps category
-`mcp`. Chat records bounded metadata under `llm`, `mcp`, `policy`, and `host`:
-turn start/end, message/tool counts, round, stop reason, request-ID presence,
-authorization/rejection, and safe error type. It does not record API request
-bodies, authorization headers, API keys, full user/model text, or duplicate full
-tool results. Existing recursive redaction and write-content omission still
-apply.
+The configurable JSONL log records metadata under `llm`, `mcp`, `policy`, and
+`host`. Gemini events include provider, model, attempt, HTTP status, finish
+reason, candidate count, function-call count, timeout/error classification,
+request start, and request finish. It never records API keys, complete headers,
+conversation bodies, full responses, sensitive arguments, tool-result bodies,
+or thought signatures. MCP protocol logging is unchanged.
 
-The HTTP client accepts only a bounded body, closes success and error responses,
-and reports invalid JSON, missing response fields, 401 authentication, 403
-permission, 429 rate/spending limits, 5xx availability failures, timeouts, DNS
-or connection failures, and request IDs without exposing response bodies or
-credentials. It intentionally does not retry because an automatic retry could
-duplicate cost or side effects.
+Gemini errors cover malformed or empty candidates/content/parts, prompt blocks,
+safety finish reasons, malformed calls, invalid arguments, invalid UTF-8/JSON,
+oversized responses, 400, 401, 403, 404, 408, 429, 500, 502, 503, 504, timeout,
+DNS, and connection failures. Only bounded, sanitized messages and request IDs
+are exposed.
 
-Anthropic API use may incur charges and is subject to account-specific rate and
-spending limits. There is no guarantee of free credits or that any particular
-model is enabled. Check the current model access, pricing, limits, and balance in
-the account before running a live session.
+Free-tier access depends on current model availability and account/project
+quota; it is not permanently guaranteed. Google's current pricing information
+states that free-tier content may be used to improve products, while applicable
+paid-tier handling differs. Review current pricing, terms, privacy controls, and
+active rate limits before live use. Do not enter real patient names, medical
+records, prescriptions, credentials, or other sensitive personal information in
+this academic chatbot.
 
 ## Medical boundary
 
-Pharmacy uses a small academic simulated dataset. The system prompt tells the
-model not to diagnose, not to replace a professional, and to prioritize urgent
-care for red flags rather than an OTC purchase. A simulated interaction check is
-not exhaustive, and a result with no recorded interaction does not prove that a
-medicine is safe. Prescription identifiers are format-only academic data.
+Pharmacy contains controlled simulated academic data. The system prompt tells
+the selected model not to diagnose, replace a healthcare professional, recommend
+prescription products, or treat a missing simulated interaction as proof of
+safety. Urgent red flags must take precedence over an OTC purchase.
 
-## Voluntary live smoke test
+## Voluntary smoke tests
 
-Choose a disposable Git repository/directory, confirm that the external server
-packages are available, and deliberately set your own values. Do not paste the
-key into source files, screenshots, documentation, or support logs.
+Live tests are optional, may consume quota or incur cost, and are never run by
+the automated suite. Use a disposable repository/directory and set your own
+credential only in the terminal environment.
+
+Gemini, the default:
 
 ```powershell
 $env:PYTHONPATH = "src"
-$env:ANTHROPIC_API_KEY = "..."
-$env:ANTHROPIC_MODEL = "model-available-to-your-account"
+$env:LLM_PROVIDER = "gemini"
+$env:GEMINI_API_KEY = "..."
+$env:GEMINI_MODEL = "gemini-3.5-flash-lite"
 $env:MCP_GIT_REPOSITORY_PATH = (Resolve-Path "path/to/disposable-repository").Path
 $env:MCP_FILESYSTEM_ROOT = $env:MCP_GIT_REPOSITORY_PATH
-python -m pharmacy_mcp.host.cli chat
+python -B -m pharmacy_mcp.host.cli chat
 ```
 
-This manual test is optional and can consume paid API usage. Automated tests use
-fake Anthropic responses and never need a real credential.
+Anthropic alternative:
+
+```powershell
+$env:LLM_PROVIDER = "anthropic"
+$env:ANTHROPIC_API_KEY = "..."
+$env:ANTHROPIC_MODEL = "model-available-to-your-account"
+python -B -m pharmacy_mcp.host.cli chat
+```
+
+Never place a real key in source, screenshots, documentation, shell history
+shared with others, or support logs.
 
 ## Troubleshooting
 
-- A missing-key or missing-model error occurs before server startup; set both
-  required variables in the current terminal.
-- A 401 usually means authentication failed; a 403 means the account cannot use
-  the requested resource; a 429 means a rate or spending limit was reached.
-- For a 5xx, timeout, or connection error, note the safe request ID when present
-  and retry manually only after deciding that another paid request is wanted.
-- If one MCP server fails, use `/servers` and `/tools`; the remaining ready
-  servers are still usable.
-- If a path is rejected, use an absolute path inside the dedicated configured
-  root. Authorization never permits an escape.
-- If history is too small for one tool exchange, restart with a larger
-  `--history-max-messages` value; the host refuses unsafe partial trimming.
+- **400:** validate the normalized model name, schema, reconstructed function
+  responses, and preserved thought signatures.
+- **401/403:** verify the selected provider, credential, project permissions,
+  and model access without printing the key.
+- **404:** confirm that `GEMINI_MODEL` is available to the project; the project
+  default is not a guarantee of permanent API availability.
+- **429:** inspect current quota and rate limits. Automatic retries are disabled
+  unless `GEMINI_MAX_RETRIES` is deliberately greater than zero.
+- **Timeout/5xx:** the request may have reached the provider. Review before a
+  manual retry or enabling bounded retries.
+- **One MCP server unavailable:** use `/servers` and `/tools`; other ready
+  servers remain usable.
+- **Path rejected:** use an absolute path inside the dedicated configured root.
+- **History too small:** restart with `chat --history-max-messages N`; unsafe
+  partial tool exchanges are never trimmed.
 
 ## References
 
+- [Gemini REST text generation](https://ai.google.dev/gemini-api/docs/generate-content/text-generation)
+- [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling)
+- [Gemini thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+- [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
+- [Gemini API rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)
+- [Gemini API terms](https://ai.google.dev/gemini-api/terms)
 - [Anthropic API overview](https://platform.claude.com/docs/en/api/overview)
-- [Messages API](https://platform.claude.com/docs/en/api/http/messages/create)
-- [Client tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)
-- [Parallel tool results format](https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use)
-- [Anthropic API errors](https://platform.claude.com/docs/en/api/errors)
+- [Anthropic Messages API](https://platform.claude.com/docs/en/api/http/messages/create)

@@ -11,10 +11,14 @@ import urllib.request
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 from pharmacy_mcp.jsonrpc.messages import JsonValue
+
+from .chat_tools import tools_for_anthropic
+from .llm import LLMAPIError, LLMConfigurationError
+from .manager import RegisteredTool
 
 ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com"
@@ -24,11 +28,11 @@ DEFAULT_MAX_TOOL_ROUNDS = 8
 DEFAULT_MAX_HTTP_RESPONSE_BYTES = 2_000_000
 
 
-class AnthropicConfigurationError(ValueError):
+class AnthropicConfigurationError(LLMConfigurationError):
     """Anthropic environment configuration is absent or invalid."""
 
 
-class AnthropicAPIError(RuntimeError):
+class AnthropicAPIError(LLMAPIError):
     """A safe, controlled Anthropic request or response failure."""
 
     def __init__(
@@ -162,6 +166,10 @@ class AnthropicMessage:
     stop_reason: str
     request_id: str | None = None
 
+    @property
+    def log_metadata(self) -> Mapping[str, JsonValue]:
+        return MappingProxyType({})
+
     def assistant_message(self) -> dict[str, JsonValue]:
         return {
             "role": "assistant",
@@ -237,6 +245,24 @@ class AnthropicMessagesClient:
         self.settings = settings
         self._transport = transport or UrllibHTTPTransport()
 
+    @property
+    def provider_name(self) -> str:
+        return "anthropic"
+
+    @property
+    def model_name(self) -> str:
+        return self.settings.model
+
+    @property
+    def max_tool_rounds(self) -> int:
+        return self.settings.max_tool_rounds
+
+    def prepare_tools(
+        self,
+        tools: Iterable[RegisteredTool],
+    ) -> list[dict[str, JsonValue]]:
+        return tools_for_anthropic(tools)
+
     def create_message(
         self,
         *,
@@ -247,7 +273,7 @@ class AnthropicMessagesClient:
         payload: dict[str, JsonValue] = {
             "model": self.settings.model,
             "max_tokens": self.settings.max_tokens,
-            "messages": deepcopy(messages),
+            "messages": _messages_for_anthropic(messages),
         }
         if tools:
             payload["tools"] = deepcopy(tools)
@@ -387,6 +413,73 @@ def _parse_message(
         stop_reason=stop_reason,
         request_id=request_id,
     )
+
+
+def _messages_for_anthropic(
+    messages: list[dict[str, JsonValue]],
+) -> list[dict[str, JsonValue]]:
+    """Copy normalized history while excluding private provider metadata."""
+
+    converted: list[dict[str, JsonValue]] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in {
+            "user",
+            "assistant",
+        }:
+            raise AnthropicAPIError("The conversation contains an invalid message.")
+        role = message["role"]
+        content = message.get("content")
+        if isinstance(content, str):
+            if role != "user":
+                raise AnthropicAPIError(
+                    "The conversation contains invalid assistant content."
+                )
+            converted.append({"role": role, "content": content})
+            continue
+        if not isinstance(content, list):
+            raise AnthropicAPIError("The conversation contains invalid content.")
+        blocks: list[dict[str, JsonValue]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                raise AnthropicAPIError(
+                    "The conversation contains an invalid content block."
+                )
+            block_type = block.get("type")
+            if block_type == "text" and isinstance(block.get("text"), str):
+                blocks.append({"type": "text", "text": block["text"]})
+            elif (
+                block_type == "tool_use"
+                and isinstance(block.get("id"), str)
+                and isinstance(block.get("name"), str)
+                and isinstance(block.get("input"), dict)
+            ):
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": block["id"],
+                        "name": block["name"],
+                        "input": deepcopy(block["input"]),
+                    }
+                )
+            elif (
+                block_type == "tool_result"
+                and isinstance(block.get("tool_use_id"), str)
+                and isinstance(block.get("content"), str)
+            ):
+                result: dict[str, JsonValue] = {
+                    "type": "tool_result",
+                    "tool_use_id": block["tool_use_id"],
+                    "content": block["content"],
+                }
+                if block.get("is_error") is True:
+                    result["is_error"] = True
+                blocks.append(result)
+            else:
+                raise AnthropicAPIError(
+                    "The conversation contains an invalid content block."
+                )
+        converted.append({"role": role, "content": blocks})
+    return converted
 
 
 def _decode_json(body: bytes, *, request_id: str | None) -> JsonValue:

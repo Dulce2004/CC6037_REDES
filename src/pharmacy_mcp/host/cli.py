@@ -20,6 +20,13 @@ from .anthropic import (
 from .chat import ChatError, ChatLimits, ChatOrchestrator, Confirmation
 from .config import DEFAULT_CONFIG_PATH, HostConfigurationError, load_host_config
 from .conversation import ConversationHistory, DEFAULT_HISTORY_MAX_MESSAGES
+from .gemini import (
+    GeminiGenerateContentClient,
+    GeminiHTTPTransport,
+    GeminiSettings,
+    Sleep,
+)
+from .llm import LLMConfigurationError, provider_from_environ
 from .manager import MCPServerManager
 from .protocol_log import DEFAULT_LOG_PATH, MCPLogError, MCPProtocolLogger
 from .stdio_client import MCPHostError
@@ -88,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     chat_parser = subparsers.add_parser(
         "chat",
-        help="Start an interactive Anthropic conversation with MCP tools.",
+        help="Start an interactive LLM conversation with MCP tools.",
     )
     chat_parser.add_argument(
         "--history-max-messages",
@@ -110,6 +117,8 @@ def main(
     stdin: TextIO | None = None,
     environ: Mapping[str, str] | None = None,
     anthropic_transport: HTTPTransport | None = None,
+    gemini_transport: GeminiHTTPTransport | None = None,
+    gemini_sleep: Sleep | None = None,
     confirmation: Confirmation | None = None,
 ) -> int:
     output_stream = stdout if stdout is not None else sys.stdout
@@ -120,11 +129,16 @@ def main(
     arguments = parser.parse_args(argv)
 
     try:
-        anthropic_settings = (
-            AnthropicSettings.from_environ(environment)
+        provider = (
+            provider_from_environ(environment)
             if arguments.command == "chat"
             else None
         )
+        provider_settings = None
+        if provider == "gemini":
+            provider_settings = GeminiSettings.from_environ(environment)
+        elif provider == "anthropic":
+            provider_settings = AnthropicSettings.from_environ(environment)
         config = load_host_config(arguments.config, environ=environment)
         with MCPProtocolLogger(
             arguments.log_file,
@@ -173,14 +187,29 @@ def main(
                     return 0
 
                 if arguments.command == "chat":
-                    assert anthropic_settings is not None
+                    assert provider is not None
+                    assert provider_settings is not None
                     history = ConversationHistory(
                         max_messages=arguments.history_max_messages
                     )
-                    llm_client = AnthropicMessagesClient(
-                        anthropic_settings,
-                        transport=anthropic_transport,
-                    )
+                    if provider == "gemini":
+                        assert isinstance(provider_settings, GeminiSettings)
+                        llm_client = GeminiGenerateContentClient(
+                            provider_settings,
+                            transport=gemini_transport,
+                            sleep=gemini_sleep,
+                            event_sink=lambda event_type, payload: (
+                                protocol_logger.orchestrator_event(
+                                    "llm", event_type, payload
+                                )
+                            ),
+                        )
+                    else:
+                        assert isinstance(provider_settings, AnthropicSettings)
+                        llm_client = AnthropicMessagesClient(
+                            provider_settings,
+                            transport=anthropic_transport,
+                        )
                     confirm = confirmation or (
                         lambda prompt: _read_line(
                             input_stream,
@@ -195,7 +224,7 @@ def main(
                         protocol_logger=protocol_logger,
                         confirmation=confirm,
                         limits=ChatLimits(
-                            max_tool_rounds=anthropic_settings.max_tool_rounds
+                            max_tool_rounds=provider_settings.max_tool_rounds
                         ),
                     )
                     failures = manager.start_available()
@@ -220,6 +249,7 @@ def main(
                 manager.stop_all()
     except (
         AnthropicConfigurationError,
+        LLMConfigurationError,
         ChatError,
         HostConfigurationError,
         MCPHostError,
@@ -239,9 +269,16 @@ def _run_chat(
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
+    ready_servers = [
+        item.name for item in manager.list_servers() if item.status == "ready"
+    ]
+    stdout.write(f"Proveedor: {orchestrator.provider_name}\n")
+    stdout.write(f"Modelo: {orchestrator.model_name}\n")
     stdout.write(
-        "Chat MCP con Anthropic listo. Escribe /help para ver comandos.\n"
+        "Servidores disponibles: "
+        f"{', '.join(ready_servers) if ready_servers else '(ninguno)'}\n"
     )
+    stdout.write("Escribe /help para ver comandos.\n")
     stdout.flush()
     try:
         while True:
@@ -259,10 +296,24 @@ def _run_chat(
             if command == "/help":
                 stdout.write(
                     "/help   muestra esta ayuda\n"
+                    "/provider muestra proveedor y modelo actuales\n"
                     "/tools  lista tools MCP disponibles\n"
                     "/servers muestra estado de servidores\n"
                     "/clear  borra el historial en memoria\n"
                     "/exit   termina y cierra los servidores\n"
+                )
+                stdout.flush()
+                continue
+            if command == "/provider":
+                stdout.write(
+                    f"Proveedor: {orchestrator.provider_name}\n"
+                    f"Modelo: {orchestrator.model_name}\n"
+                )
+                stdout.flush()
+                continue
+            if command.startswith("/provider "):
+                stdout.write(
+                    "El proveedor no puede cambiarse durante una sesión activa.\n"
                 )
                 stdout.flush()
                 continue
@@ -289,7 +340,10 @@ def _run_chat(
                 stderr.write(f"chat error: {exc}\n")
                 stderr.flush()
                 continue
-            stdout.write(f"Claude> {response}\n")
+            label = (
+                "Gemini" if orchestrator.provider_name == "gemini" else "Claude"
+            )
+            stdout.write(f"{label}> {response}\n")
             stdout.flush()
     except (EOFError, KeyboardInterrupt):
         stdout.write("\n")
