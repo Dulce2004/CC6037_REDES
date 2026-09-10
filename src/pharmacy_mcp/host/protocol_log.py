@@ -128,6 +128,7 @@ class MCPProtocolLogger:
             "direction": "diagnostic",
             "message_type": "diagnostic",
             "payload": payload,
+            "category": "mcp",
         }
         line = self._append_entry(entry)
         self._write_diagnostic(f"[MCP {server_name} stderr] {payload}")
@@ -142,6 +143,7 @@ class MCPProtocolLogger:
         *,
         transport: str = "stdio",
         method: str = "tools/call",
+        category: str = "policy",
     ) -> None:
         """Record a local policy decision that was not sent to a server."""
 
@@ -153,10 +155,30 @@ class MCPProtocolLogger:
             "message_type": event_type,
             "method": method,
             "payload": self._bounded_payload(payload),
+            "category": category,
         }
         line = self._append_entry(entry)
         if self._show_traffic:
             self._write_diagnostic(f"[MCP log] {line}")
+
+    def orchestrator_event(
+        self,
+        category: str,
+        event_type: str,
+        payload: dict[str, JsonValue],
+    ) -> None:
+        """Record bounded metadata for the chat host without conversation text."""
+
+        if category not in {"llm", "mcp", "policy", "host"}:
+            raise ValueError("Unsupported orchestrator log category.")
+        self.host_event(
+            "host",
+            event_type,
+            payload,
+            transport="local",
+            method="chat",
+            category=category,
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -196,6 +218,7 @@ class MCPProtocolLogger:
             "payload": self._bounded_payload(
                 _omit_write_content(decoded) if direction == "outbound" else decoded
             ),
+            "category": "mcp",
         }
         if isinstance(decoded, dict):
             method = decoded.get("method")

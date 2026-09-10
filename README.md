@@ -13,10 +13,12 @@ input and returns protocol responses over standard output. A configurable
 terminal host can launch that server plus the pinned official Git and Filesystem
 MCP servers as independent child processes, discover namespaced tools
 dynamically, and invoke them while recording a bounded, redacted JSONL protocol
-trace. The
-host's stdio client, lifecycle, JSON-RPC correlation, routing, and policy checks
-remain manually implemented. The direct in-memory pharmacy client and its
-interactive CLI remain available for local demonstrations and tests.
+trace. An interactive `chat` command calls Anthropic's non-streaming Messages
+REST API with the Python standard library, keeps session history in memory, and
+executes requested MCP tools through that same manager. The host's HTTP client,
+tool loop, stdio client, lifecycle, JSON-RPC correlation, routing, and policy
+checks remain manually implemented. The direct in-memory pharmacy client and
+its interactive CLI remain available for local demonstrations and tests.
 
 > **Medical disclaimer:** This project is for education and demonstration only.
 > It does not provide a diagnosis, recommend treatment, or replace advice from a
@@ -39,6 +41,9 @@ The implemented MCP subset supports:
   reversible namespaced tool routing such as `pharmacy__check_stock`.
 - A technical host CLI that lists configured servers, discovers tools, invokes
   tools, and appends redacted MCP traffic to a durable JSONL file.
+- An Anthropic-backed terminal chat with dynamically converted tools,
+  multi-tool result correlation, bounded in-memory context, and per-operation
+  confirmation for mutations.
 - Official external `mcp-server-git==2026.8.18` integration through `uvx`, with
   dynamically discovered `git__<tool>` names, an exact configured repository
   boundary, and explicit authorization for mutable tools.
@@ -85,6 +90,8 @@ SQLite; subsequent stock calls read that same state.
 
 ```text
 Terminal host CLI
+  -> chat orchestrator -> Anthropic Messages REST API
+  -> dynamically converted tool definitions / in-memory conversation
   -> MCP server manager
   -> namespaced registry: <server>__<tool>
   -> one manual stdio MCP client per configured server
@@ -115,6 +122,9 @@ also be mirrored there with `--show-log`. Logged payloads and individual strings
 have explicit size limits, binary fields are omitted, and write/edit bodies are
 replaced by markers before persistence; the wire message sent to the child is
 unchanged.
+Chat events share the same JSONL destination but contain metadata only. Their
+explicit `category` is `llm`, `mcp`, `policy`, or `host`; message bodies,
+authentication headers, full tool results, and API credentials are not logged.
 
 The stdio loop owns one `PharmacyMCPServer` instance, so lifecycle state is
 preserved across input lines until EOF. Protocol output is reserved for stdout;
@@ -139,6 +149,7 @@ files.
 |   |-- demo-guide.md
 |   |-- filesystem-git-mcp-demo.md
 |   |-- git-mcp-demo.md
+|   |-- chatbot-guide.md
 |   |-- mcp-host-guide.md
 |   `-- mcp-server-specification.md
 |-- src/
@@ -163,6 +174,8 @@ files.
   resolved in npm's user cache and does not create `node_modules` or package
   metadata in this repository.
 - PowerShell or a Bash-compatible terminal.
+- An Anthropic API account with available billing/credits for voluntary live
+  chat use, an API key, and a model identifier available to that account.
 
 There are no third-party imports in the project's runtime code.
 `requirements.txt` intentionally contains no package requirements. The external
@@ -235,6 +248,12 @@ before the subcommand. See the [terminal host guide](docs/mcp-host-guide.md) and
 The [combined Filesystem and Git demonstration](docs/filesystem-git-mcp-demo.md)
 shows the complete create/read/stage/commit workflow.
 
+For interactive chat, set `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`, then run
+`python -m pharmacy_mcp.host.cli chat`. The key is required but never stored or
+logged. The model is deliberately required instead of silently pinning one that
+may later be unavailable. Read [the chatbot guide](docs/chatbot-guide.md) before
+using a paid API account or authorizing any mutation.
+
 ## Run the tests
 
 From the repository root:
@@ -257,12 +276,18 @@ multi-server namespacing, independent server state, protocol logging, and host
 CLI behavior. Real integrations launch the exact pinned `uvx` and `npx`
 commands and use only generated repositories under ignored `runtime/`; the
 combined test runs all three servers and verifies cleanup.
+Network-free Anthropic tests inject a fake HTTP transport. A separate simulated
+LLM workflow starts all three real MCP processes, preserves conversational
+context, exercises read calls plus rejected and authorized writes, verifies
+multi-tool correlation and logs, then removes its disposable artifacts. No test
+contacts Anthropic or consumes API credits.
 
 ## Documentation
 
 - [Local MCP server specification](docs/mcp-server-specification.md)
 - [Reproducible stdio demonstration guide](docs/demo-guide.md)
 - [Configurable terminal host guide](docs/mcp-host-guide.md)
+- [Anthropic chatbot and tool-loop guide](docs/chatbot-guide.md)
 - [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
 - [Combined Filesystem and Git MCP demonstration](docs/filesystem-git-mcp-demo.md)
 
@@ -288,10 +313,13 @@ through a complete manual handshake and tool call.
   are not implemented.
 - There is no authentication because the server is a local child process using
   stdio.
-- The host supports only configured local stdio processes. It does not include
-  HTTP, remote servers, Git remotes, or an LLM.
+- MCP servers remain local stdio processes; there is no MCP HTTP transport,
+  remote Pharmacy server, Git remote operation, web UI, or streaming response.
+- Conversation memory exists only for the current `chat` process. The Anthropic
+  client makes one non-streaming request at a time and intentionally performs no
+  automatic retries.
 - Natural-language symptom handling is limited to deterministic controlled
-  phrases; there is no LLM interpretation.
+  phrases inside the tool; the LLM does not change its validated rule engine.
 - Interaction and allergy rules are deliberately small, simulated, and
   non-exhaustive. No tool output should be treated as medical advice or proof of
   medication safety.
@@ -302,7 +330,6 @@ The following items are planned possibilities, not implemented functionality:
 
 - Add later fulfillment and cancellation transitions if the course scope
   requires them.
-- Integrate an LLM for natural-language interaction.
 - Add Streamable HTTP and a remote-server deployment.
 - Capture and analyze later network transports with Wireshark.
 
@@ -318,3 +345,5 @@ The following items are planned possibilities, not implemented functionality:
 - [`mcp-server-git` 2026.8.18 on PyPI](https://pypi.org/project/mcp-server-git/2026.8.18/)
 - [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 - [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
+- [Anthropic API overview](https://platform.claude.com/docs/en/api/overview)
+- [Anthropic client tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview)

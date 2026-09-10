@@ -14,6 +14,7 @@ from .policy import (
     RepositoryPolicyViolation,
     prepare_filesystem_invocation,
     prepare_repository_invocation,
+    is_read_only_tool,
 )
 from .protocol_log import MCPProtocolLogger
 from .stdio_client import MCPHostError, MCPProtocolError
@@ -70,6 +71,14 @@ class ServerSummary:
         }
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ServerStartFailure:
+    """Safe summary of one server that could not be started."""
+
+    server_name: str
+    error: str
+
+
 class MCPServerManager:
     """Start multiple servers and route tools by ``server__tool``."""
 
@@ -89,6 +98,7 @@ class MCPServerManager:
         )
         self._clients: dict[str, StdioMCPClient] = {}
         self._tools: dict[str, RegisteredTool] = {}
+        self._start_failures: set[str] = set()
 
     def list_servers(self) -> tuple[ServerSummary, ...]:
         """List configuration and state without starting new processes."""
@@ -104,7 +114,11 @@ class MCPServerManager:
                     status=(
                         "ready"
                         if client is not None and client.is_ready
-                        else "stopped"
+                        else (
+                            "error"
+                            if config.name in self._start_failures
+                            else "stopped"
+                        )
                     ),
                     process_id=client.process_id if client is not None else None,
                 )
@@ -136,6 +150,7 @@ class MCPServerManager:
             raise
 
         self._clients[server_name] = client
+        self._start_failures.discard(server_name)
         for tool in registered:
             self._tools[tool.namespaced_name] = tool
 
@@ -160,11 +175,38 @@ class MCPServerManager:
                     pass
             raise
 
+    def start_available(self) -> tuple[ServerStartFailure, ...]:
+        """Start every enabled server while preserving those that succeed."""
+
+        failures: list[ServerStartFailure] = []
+        for config in self._config.servers:
+            if not config.enabled:
+                continue
+            try:
+                self.start_server(config.name)
+            except Exception as exc:
+                self._start_failures.add(config.name)
+                failures.append(
+                    ServerStartFailure(
+                        server_name=config.name,
+                        error=_safe_start_error(exc),
+                    )
+                )
+                self._protocol_logger.host_event(
+                    config.name,
+                    "server_start_failed",
+                    {"error_type": type(exc).__name__},
+                    method="initialize",
+                    category="host",
+                )
+        return tuple(failures)
+
     def stop_server(self, server_name: str) -> None:
         """Remove one server's registry and close its stdin cleanly."""
 
         self._require_config(server_name)
         client = self._clients.pop(server_name, None)
+        self._start_failures.discard(server_name)
         self._tools = {
             name: tool
             for name, tool in self._tools.items()
@@ -303,6 +345,19 @@ class MCPServerManager:
             )
         return tool
 
+    def requires_confirmation(self, namespaced_name: str) -> bool:
+        """Classify mutations for interactive chat without bypassing policies."""
+
+        tool = self.resolve_tool(namespaced_name)
+        config = self._configs[tool.server_name]
+        if tool.server_name == "pharmacy":
+            return tool.tool_name == "create_order"
+        if config.repository_policy is not None:
+            return tool.tool_name in config.repository_policy.mutable_tools
+        if config.filesystem_policy is not None:
+            return not is_read_only_tool(tool.annotations)
+        return not is_read_only_tool(tool.annotations)
+
     def server_name_from_namespace(self, namespaced_name: str) -> str:
         if not isinstance(namespaced_name, str):
             raise MCPHostError("Namespaced tool name must be a string.")
@@ -394,3 +449,9 @@ class MCPServerManager:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.stop_all()
+
+
+def _safe_start_error(exc: Exception) -> str:
+    if isinstance(exc, MCPHostError):
+        return str(exc)[:500]
+    return f"{type(exc).__name__}: server startup failed"

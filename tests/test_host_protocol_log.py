@@ -221,6 +221,31 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertNotIn("never-log-this-secret", serialized_log)
         self.assertIn(REDACTION_MARKER, serialized_log)
 
+    def test_orchestrator_events_have_explicit_safe_categories(self) -> None:
+        with MCPProtocolLogger(
+            self.log_path,
+            diagnostic_stream=self.stderr,
+        ) as logger:
+            for category in ("llm", "mcp", "policy", "host"):
+                logger.orchestrator_event(
+                    category,
+                    f"{category}_event",
+                    {"count": 1, "token": "must-not-appear"},
+                )
+
+            with self.assertRaisesRegex(ValueError, "category"):
+                logger.orchestrator_event("unknown", "event", {})
+
+        entries = self._read_entries()
+        self.assertEqual(
+            [entry["category"] for entry in entries[-4:]],
+            ["llm", "mcp", "policy", "host"],
+        )
+        self.assertTrue(all(
+            entry["payload"]["token"] == REDACTION_MARKER
+            for entry in entries[-4:]
+        ))
+
     def test_long_strings_and_binary_fields_are_bounded_or_omitted(self) -> None:
         payload = {
             "jsonrpc": "2.0",

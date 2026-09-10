@@ -9,11 +9,14 @@ a reversible global name.
 
 The committed configuration contains the local `pharmacy` server, official
 external `mcp-server-git==2026.8.18`, and official external
-`@modelcontextprotocol/server-filesystem@2026.8.31`. The host does not integrate
-an LLM, HTTP transport, remote services, or Git remotes.
+`@modelcontextprotocol/server-filesystem@2026.8.31`. The host also offers an
+optional Anthropic Messages REST client for interactive chat. Anthropic HTTP is
+separate from MCP transport: every MCP server remains a local stdio child, and
+there are still no remote MCP services or Git remotes.
 
 ```text
 Host CLI
+  -> optional chat orchestrator -> Anthropic Messages API
   -> MCPServerManager
       -> registry: <server>__<tool>
       -> StdioMCPClient
@@ -143,6 +146,17 @@ command and closes their stdin afterward, allowing the servers to exit on EOF.
 Invalid argument JSON and malformed namespaces fail with a nonzero status before
 a tool call. Unknown tools return a clear host error, and all started children
 are still closed.
+
+The `chat` command is interactive and does not honor `--allow-mutation` as a
+blanket authorization. It asks before every mutable operation. Configure the
+Anthropic environment and follow the dedicated
+[chatbot guide](chatbot-guide.md):
+
+```powershell
+$env:ANTHROPIC_API_KEY = "..."
+$env:ANTHROPIC_MODEL = "model-available-to-your-account"
+python -m pharmacy_mcp.host.cli chat
+```
 
 Add the global `--allow-mutation` option before `call-tool` only after reviewing
 the intended change. Without it, configured mutable tools are rejected locally
@@ -314,10 +328,15 @@ Each line is one complete JSON object with:
 - `method`: included when the JSON-RPC message has one;
 - `id`: included when the JSON-RPC message has one, including a null ID;
 - `payload`: a redacted and explicitly bounded representation of the message.
+- `category`: `mcp` for protocol traffic, or `llm`, `policy`, and `host` for
+  metadata-only chat events.
 
 The log covers `initialize` and its response,
 `notifications/initialized`, `tools/list` and its response, and every
 `tools/call` result or JSON-RPC error.
+Chat adds turn, API-call, stop-reason, tool-count, authorization, failure, and
+completion events. It does not add API request bodies, authentication headers,
+user/assistant text, or duplicate full tool results.
 
 Local policy entries are not protocol traffic. They identify the server and
 registered tool, but omit arguments and environment values. A rejected call has
@@ -343,7 +362,8 @@ original JSON-RPC message is sent unchanged. There is no automatic rotation.
 
 ## stdout, stderr, and log visualization
 
-- Host stdout contains only the requested formatted JSON result.
+- For technical commands, host stdout contains only the requested formatted
+  JSON result. In `chat`, it contains prompts, command output, and final replies.
 - Host stderr contains errors and child diagnostics.
 - Child stdout contains only NDJSON JSON-RPC protocol messages.
 - The JSONL file keeps the durable exchange history.
@@ -378,3 +398,4 @@ the complete three-server workflow and human confirmation point.
 - [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 - [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
 - [MCP lifecycle and version negotiation, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
+- [Anthropic Messages API](https://platform.claude.com/docs/en/api/http/messages/create)

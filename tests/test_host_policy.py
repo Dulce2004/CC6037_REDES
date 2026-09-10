@@ -230,6 +230,9 @@ class ManagerPolicyTests(unittest.TestCase):
         self.assertEqual(entries[0]["message_type"], "mutation_authorized")
         self.assertEqual(entries[0]["payload"]["tool"], "git_add")
 
+    def test_chat_confirmation_classification_uses_repository_policy(self) -> None:
+        self.assertTrue(self.manager.requires_confirmation("git__git_add"))
+
     def test_repository_rejection_is_logged_without_exposing_path(self) -> None:
         outside = self.root.parent
 

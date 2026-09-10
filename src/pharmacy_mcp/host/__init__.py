@@ -1,5 +1,38 @@
 """Configurable host for local MCP servers over stdio."""
 
+from .anthropic import (
+    ANTHROPIC_API_VERSION,
+    DEFAULT_ANTHROPIC_BASE_URL,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    DEFAULT_MAX_HTTP_RESPONSE_BYTES,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_TOOL_ROUNDS,
+    AnthropicAPIError,
+    AnthropicConfigurationError,
+    AnthropicMessage,
+    AnthropicMessagesClient,
+    AnthropicSettings,
+    HTTPRequest,
+    HTTPResponse,
+    UrllibHTTPTransport,
+)
+from .chat import (
+    DEFAULT_MAX_TOOLS_PER_RESPONSE,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_VERSION,
+    ChatError,
+    ChatLimits,
+    ChatOrchestrator,
+)
+from .chat_tools import (
+    DEFAULT_MAX_TOOL_RESULT_CHARS,
+    TOOL_RESULT_TRUNCATION_MARKER,
+    ToolConversionError,
+    mcp_result_for_anthropic,
+    mutation_effect,
+    sanitized_argument_summary,
+    tools_for_anthropic,
+)
 from .config import (
     DEFAULT_CONFIG_PATH,
     FilesystemPolicyConfig,
@@ -13,6 +46,7 @@ from .manager import (
     NAMESPACE_SEPARATOR,
     MCPServerManager,
     RegisteredTool,
+    ServerStartFailure,
     ServerSummary,
 )
 from .protocol_log import (
@@ -33,6 +67,13 @@ from .policy import (
     RepositoryPolicyViolation,
     prepare_filesystem_invocation,
     prepare_repository_invocation,
+    is_read_only_tool,
+)
+from .conversation import (
+    DEFAULT_HISTORY_MAX_MESSAGES,
+    DEFAULT_MAX_USER_INPUT_CHARS,
+    ConversationError,
+    ConversationHistory,
 )
 from .stdio_client import (
     HOST_NAME,
@@ -46,10 +87,19 @@ from .stdio_client import (
 )
 
 __all__ = [
+    "ANTHROPIC_API_VERSION",
+    "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_CONFIG_PATH",
+    "DEFAULT_HISTORY_MAX_MESSAGES",
+    "DEFAULT_HTTP_TIMEOUT_SECONDS",
     "DEFAULT_LOG_PATH",
+    "DEFAULT_MAX_HTTP_RESPONSE_BYTES",
     "DEFAULT_MAX_LOG_PAYLOAD_CHARS",
     "DEFAULT_MAX_LOG_STRING_CHARS",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_MAX_TOOL_RESULT_CHARS",
+    "DEFAULT_MAX_TOOL_ROUNDS",
+    "DEFAULT_MAX_TOOLS_PER_RESPONSE",
     "BINARY_OMISSION_MARKER",
     "HOST_NAME",
     "HOST_VERSION",
@@ -70,14 +120,38 @@ __all__ = [
     "MCPServerManager",
     "MCPServerResponseError",
     "MCPTransportError",
+    "AnthropicAPIError",
+    "AnthropicConfigurationError",
+    "AnthropicMessage",
+    "AnthropicMessagesClient",
+    "AnthropicSettings",
+    "ChatError",
+    "ChatLimits",
+    "ChatOrchestrator",
+    "ConversationError",
+    "ConversationHistory",
+    "DEFAULT_MAX_USER_INPUT_CHARS",
+    "HTTPRequest",
+    "HTTPResponse",
     "RegisteredTool",
     "RepositoryPolicyConfig",
     "RepositoryPolicyViolation",
+    "SYSTEM_PROMPT",
+    "SYSTEM_PROMPT_VERSION",
+    "ServerStartFailure",
     "ServerSummary",
     "StdioMCPClient",
     "StdioServerConfig",
+    "TOOL_RESULT_TRUNCATION_MARKER",
+    "ToolConversionError",
+    "UrllibHTTPTransport",
+    "is_read_only_tool",
     "load_host_config",
     "prepare_filesystem_invocation",
     "prepare_repository_invocation",
     "redact_sensitive_data",
+    "mcp_result_for_anthropic",
+    "mutation_effect",
+    "sanitized_argument_summary",
+    "tools_for_anthropic",
 ]

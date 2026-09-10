@@ -188,6 +188,59 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertEqual(manager._clients, {})
         self.assertEqual(manager.list_tools(), ())
 
+    def test_start_available_preserves_successes_and_marks_failure(self) -> None:
+        configs = tuple(
+            self.server_config(name, self.database_paths[index % 2])
+            for index, name in enumerate(("pharmacy", "git", "filesystem"))
+        )
+        manager = MCPServerManager(
+            HostConfig(servers=configs),
+            protocol_logger=self.protocol_logger,
+        )
+        clients: dict[str, _StartClient] = {}
+
+        def create_client(config, *, protocol_logger):
+            client = _StartClient(
+                config.name,
+                fail_on_start=config.name == "git",
+            )
+            clients[config.name] = client
+            return client
+
+        with patch(
+            "pharmacy_mcp.host.manager.StdioMCPClient",
+            side_effect=create_client,
+        ):
+            failures = manager.start_available()
+
+        self.assertEqual([item.server_name for item in failures], ["git"])
+        self.assertEqual(set(manager._clients), {"pharmacy", "filesystem"})
+        self.assertEqual(
+            [item.status for item in manager.list_servers()],
+            ["ready", "error", "ready"],
+        )
+        self.assertIn("pharmacy__sample_tool", {
+            item.namespaced_name for item in manager.list_tools()
+        })
+        manager.stop_all()
+
+    def test_pharmacy_order_requires_confirmation_but_queries_do_not(self) -> None:
+        self.manager.start_server("pharmacy")
+
+        self.assertTrue(
+            self.manager.requires_confirmation("pharmacy__create_order")
+        )
+        for name in (
+            "pharmacy__assess_symptoms",
+            "pharmacy__search_medications",
+            "pharmacy__get_medication_details",
+            "pharmacy__check_interactions",
+            "pharmacy__check_stock",
+            "pharmacy__get_order_status",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(self.manager.requires_confirmation(name))
+
     def test_server_tool_name_with_separator_or_unsafe_character_is_rejected(
         self,
     ) -> None:

@@ -306,6 +306,16 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
             },
         )
 
+    def test_chat_confirmation_classification_uses_annotations(self) -> None:
+        self.register("read_text_file", {"readOnlyHint": True})
+        self.register("write_file", {"readOnlyHint": False})
+        self.assertFalse(
+            self.manager.requires_confirmation("filesystem__read_text_file")
+        )
+        self.assertTrue(
+            self.manager.requires_confirmation("filesystem__write_file")
+        )
+
 
 class _RecordingClient:
     is_ready = True

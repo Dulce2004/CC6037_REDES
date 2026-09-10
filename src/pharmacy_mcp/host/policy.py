@@ -157,7 +157,7 @@ def prepare_filesystem_invocation(
             path_count=index,
         )
 
-    mutation_required = not _is_read_only_tool(annotations)
+    mutation_required = not is_read_only_tool(annotations)
     if mutation_required and not allow_mutation:
         raise FilesystemPolicyViolation(
             f"Filesystem tool '{tool_name}' requires explicit --allow-mutation "
@@ -235,7 +235,9 @@ def _validate_filesystem_path(
             )
 
 
-def _is_read_only_tool(annotations: dict[str, JsonValue] | None) -> bool:
+def is_read_only_tool(annotations: dict[str, JsonValue] | None) -> bool:
+    """Return true only for an unambiguously non-destructive MCP annotation."""
+
     return (
         isinstance(annotations, dict)
         and annotations.get("readOnlyHint") is True
