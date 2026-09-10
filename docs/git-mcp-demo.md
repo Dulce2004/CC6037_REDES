@@ -17,11 +17,13 @@ server returned the same revision, so the normal lifecycle described by the
 [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
 was used without a compatibility fallback.
 
-The controlled verification observed `serverInfo.name` as `mcp-git` and
-`serverInfo.version` as `1.29.1`, plus `experimental: {}` and
-`tools.listChanged: false` capabilities. That server-reported implementation
-version is distinct from the pinned PyPI distribution version `2026.8.18`; the
-host preserves it instead of rewriting or inferring metadata.
+The controlled verification observed `serverInfo.name` as `mcp-git` and, most
+recently, `serverInfo.version` as `1.30.0`, plus `experimental: {}` and
+`tools.listChanged: false` capabilities. `serverInfo.version` is implementation
+metadata announced by the running process and may change with its internal
+components or dependencies. It is not the package pin: the external PyPI
+distribution executed by this project remains fixed at `2026.8.18`. The host
+preserves the announced metadata instead of rewriting or inferring it.
 
 ## Prerequisites and cache preparation
 

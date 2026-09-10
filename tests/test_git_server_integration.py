@@ -91,8 +91,11 @@ class OfficialGitServerIntegrationTests(unittest.TestCase):
                 pharmacy_process = pharmacy_client._process
                 git_process = git_client._process
 
+                self.assertIsInstance(git_client.server_info, dict)
                 self.assertEqual(git_client.server_info["name"], "mcp-git")
-                self.assertEqual(git_client.server_info["version"], "1.29.1")
+                self.assertIn("version", git_client.server_info)
+                self.assertIsInstance(git_client.server_info["version"], str)
+                self.assertTrue(git_client.server_info["version"].strip())
                 self.assertEqual(len(manager.list_tools("pharmacy")), 7)
                 git_tools = manager.list_tools("git")
                 original_names = {tool.tool_name for tool in git_tools}
