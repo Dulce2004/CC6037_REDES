@@ -115,6 +115,7 @@ class PharmacyMCPServer:
             catalog=catalog,
         )
         inventory.initialize(initial_inventory)
+        self._inventory = inventory
         query_handlers = PharmacyQueryHandlers(
             catalog=catalog,
             inventory=inventory,
@@ -157,6 +158,11 @@ class PharmacyMCPServer:
             input_schema=GET_ORDER_STATUS_INPUT_SCHEMA,
             handler=order_handlers.get_order_status,
         )
+
+    def close(self) -> None:
+        """Release transport-independent resources owned by this server."""
+
+        self._inventory.close()
 
     def register_tool(
         self,

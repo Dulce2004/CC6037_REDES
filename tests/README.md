@@ -11,9 +11,14 @@ python -m unittest discover -s tests -v
 The suite separately covers the JSON-RPC layer, local MCP server core,
 deterministic symptom assessment, simulated interaction and allergy rules,
 catalog, SQLite inventory, atomic orders, concurrency, in-memory client, stdio
-transport, and complete client-server flows. Host coverage includes strict
-configuration, subprocess lifecycle, reversible `server__tool` registration
-across multiple servers, durable redacted JSONL logging, and the technical CLI.
+transport, Streamable HTTP over real ephemeral loopback ports, and complete
+client-server flows. HTTP coverage includes strict media types and UTF-8,
+authentication, Origin, protocol and session headers, expiry, DELETE, request
+and response limits, independent lifecycle, rollback, and concurrent
+no-oversell behavior. Host coverage includes strict mixed-transport
+configuration, subprocess/session lifecycle, reversible `server__tool`
+registration across multiple servers, partial availability, durable redacted
+JSONL logging, and the technical CLI.
 Persistent tests use unique isolated SQLite files; common instances use an
 in-memory database. `classify_symptoms` is tested only as an internal engine;
 the public tool is `assess_symptoms`. Repository-policy tests cover canonical

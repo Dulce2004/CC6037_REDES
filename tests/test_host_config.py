@@ -16,6 +16,7 @@ sys.path.insert(0, str(SOURCE_DIRECTORY))
 
 from pharmacy_mcp.host import (  # noqa: E402
     DEFAULT_CONFIG_PATH,
+    HTTPServerConfig,
     HostConfigurationError,
     load_host_config,
 )
@@ -40,7 +41,7 @@ class HostConfigurationTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_default_config_contains_three_fixed_servers(self) -> None:
+    def test_default_config_contains_local_servers_and_disabled_remote(self) -> None:
         config = load_host_config(
             DEFAULT_CONFIG_PATH,
             environ={
@@ -49,7 +50,7 @@ class HostConfigurationTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(len(config.servers), 3)
+        self.assertEqual(len(config.servers), 4)
         pharmacy = config.servers[0]
         self.assertEqual(pharmacy.name, "pharmacy")
         self.assertEqual(pharmacy.transport, "stdio")
@@ -97,9 +98,22 @@ class HostConfigurationTests(unittest.TestCase):
             filesystem.filesystem_policy.path_arguments,
             ("path", "paths", "source", "destination"),
         )
+        remote = config.servers[3]
+        self.assertIsInstance(remote, HTTPServerConfig)
+        self.assertEqual(remote.name, "pharmacy-remote")
+        self.assertEqual(remote.transport, "http")
+        self.assertFalse(remote.enabled)
+        self.assertIsNone(remote.url)
+        self.assertEqual(remote.token_env, "PHARMACY_MCP_HTTP_TOKEN")
+        self.assertEqual(remote.mutable_tools, frozenset({"create_order"}))
         self.assertEqual(
             config.variables,
-            ("MCP_GIT_REPOSITORY_PATH", "MCP_FILESYSTEM_ROOT"),
+            (
+                "MCP_GIT_REPOSITORY_PATH",
+                "MCP_FILESYSTEM_ROOT",
+                "PHARMACY_REMOTE_MCP_URL",
+                "PHARMACY_MCP_HTTP_TOKEN",
+            ),
         )
 
     def test_npx_builtin_uses_controlled_platform_launchers(self) -> None:
@@ -355,13 +369,95 @@ class HostConfigurationTests(unittest.TestCase):
                 with self.assertRaises(HostConfigurationError):
                     load_host_config(self.config_path)
 
-    def test_non_stdio_transport_is_rejected(self) -> None:
+    def test_unknown_transport_is_rejected(self) -> None:
         server = self.server_config("pharmacy")
-        server["transport"] = "http"
+        server["transport"] = "websocket"
         self.write_config({"servers": [server]})
 
-        with self.assertRaisesRegex(HostConfigurationError, "stdio"):
+        with self.assertRaisesRegex(HostConfigurationError, "stdio.*http"):
             load_host_config(self.config_path)
+
+    def test_http_server_configuration_is_strict_and_secret_safe(self) -> None:
+        self.write_config(
+            {
+                "variables": ["REMOTE_URL", "REMOTE_TOKEN"],
+                "servers": [
+                    {
+                        "name": "pharmacy-remote",
+                        "transport": "http",
+                        "url": "${REMOTE_URL}",
+                        "token_env": "REMOTE_TOKEN",
+                        "timeout_seconds": 2,
+                        "max_request_bytes": 2048,
+                        "max_response_bytes": 4096,
+                        "mutable_tools": ["create_order"],
+                    }
+                ],
+            }
+        )
+
+        config = load_host_config(
+            self.config_path,
+            environ={
+                "REMOTE_URL": "https://pharmacy.example.test/mcp/",
+                "REMOTE_TOKEN": "super-secret-token",
+            },
+        ).servers[0]
+
+        self.assertIsInstance(config, HTTPServerConfig)
+        self.assertEqual(config.url, "https://pharmacy.example.test/mcp")
+        self.assertEqual(config.timeout_seconds, 2.0)
+        self.assertEqual(config.max_request_bytes, 2048)
+        self.assertEqual(config.max_response_bytes, 4096)
+        self.assertNotIn("super-secret-token", repr(config))
+
+    def test_http_rejects_remote_cleartext_and_undeclared_token_variable(self) -> None:
+        base = {
+            "name": "pharmacy-remote",
+            "transport": "http",
+            "url": "http://pharmacy.example.test/mcp",
+            "enabled": True,
+        }
+        self.write_config({"servers": [base]})
+        with self.assertRaisesRegex(HostConfigurationError, "HTTPS"):
+            load_host_config(self.config_path)
+
+        self.write_config(
+            {
+                "variables": ["REMOTE_URL"],
+                "servers": [
+                    {
+                        **base,
+                        "url": "${REMOTE_URL}",
+                        "token_env": "UNDECLARED_TOKEN",
+                    }
+                ],
+            }
+        )
+        with self.assertRaisesRegex(HostConfigurationError, "undeclared"):
+            load_host_config(
+                self.config_path,
+                environ={"REMOTE_URL": "https://example.test/mcp"},
+            )
+
+        self.write_config(
+            {
+                "variables": ["REMOTE_TOKEN"],
+                "servers": [
+                    {
+                        "name": "pharmacy-remote",
+                        "transport": "http",
+                        "url": "https://example.test/mcp",
+                        "token_env": "REMOTE_TOKEN",
+                    }
+                ],
+            }
+        )
+        with self.assertRaisesRegex(HostConfigurationError, "token"):
+            load_host_config(
+                self.config_path,
+                environ={"REMOTE_TOKEN": "invalid token with spaces"},
+            )
 
     def test_unknown_fields_and_invalid_timeouts_are_rejected(self) -> None:
         cases = (

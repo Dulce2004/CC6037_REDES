@@ -3,17 +3,18 @@
 ## Purpose and scope
 
 The terminal host is an independent local MCP client layer. It reads a JSON
-configuration, starts enabled stdio servers as child processes, completes the
-MCP initialization lifecycle, discovers their tools, and routes manual calls by
-a reversible global name.
+configuration, starts enabled stdio servers as child processes or connects to
+enabled Streamable HTTP endpoints, completes the MCP initialization lifecycle,
+discovers their tools, and routes manual calls by a reversible global name.
 
 The committed configuration contains the local `pharmacy` server, official
 external `mcp-server-git==2026.8.18`, and official external
-`@modelcontextprotocol/server-filesystem@2026.8.31`. The host also offers a
+`@modelcontextprotocol/server-filesystem@2026.8.31`, plus a disabled
+`pharmacy-remote` HTTP template. The host also offers a
 Gemini Developer API REST client for interactive chat, with Anthropic Messages
-as an optional alternative. Provider HTTP is separate from MCP transport: every
-MCP server remains a local stdio child, and there are still no remote MCP
-services or Git remotes.
+as an optional alternative. Provider HTTP is separate from MCP transport. The
+MCP manager supports both local stdio children and a configured Pharmacy HTTP
+endpoint; no remote service is deployed by this repository.
 
 ```text
 Host CLI
@@ -25,32 +26,53 @@ Host CLI
           -> pinned official Git MCP child process
           -> pinned official Filesystem MCP child process
               -> NDJSON JSON-RPC over stdin/stdout
+      -> HTTPMCPClient
+          -> optional Pharmacy Streamable HTTP /mcp endpoint
+              -> one JSON-RPC message per POST
 ```
 
-The existing in-memory client and the server's standalone stdio entry point are
-unchanged and remain usable independently.
+The existing in-memory client and standalone stdio entry point remain usable
+independently. The HTTP server and client reuse the same JSON-RPC types and MCP
+lifecycle rather than replacing those paths.
 
 ## Server configuration
 
 The default file is `config/mcp-servers.json`. It has a non-empty `servers`
-array and an optional `variables` array. Each server definition supports:
+array and an optional `variables` array. All definitions support:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Unique namespace prefix made of letters, digits, `_`, or `-`; it must start with a letter, cannot contain `__`, and cannot end in `_`. |
-| `transport` | yes | Must currently be `stdio`. |
+| `transport` | yes | `stdio` or `http`. |
+| `enabled` | no | Whether startup should use this definition; default is `true`. |
+
+Stdio definitions additionally support:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
 | `command` | yes | Executable path, `${PYTHON_EXECUTABLE}`, or the controlled `${NPX_EXECUTABLE}` launcher. |
 | `args` | no | Array of literal process arguments. |
 | `cwd` | no | Working directory, resolved relative to the configuration file; default is `.`. |
 | `env` | no | String environment variables added to the inherited process environment. |
 | `request_timeout_seconds` | no | Positive request timeout up to 300 seconds; default is 10. |
 | `shutdown_timeout_seconds` | no | Positive graceful-shutdown timeout up to 300 seconds; default is 5. |
-| `enabled` | no | Whether `list-tools` starts the server; default is `true`. |
 | `repository_policy` | no | General host policy that fixes a repository argument to one canonical root and declares original mutable tool names. |
 | `filesystem_policy` | no | Filesystem path boundary, inspected path argument names, and explicitly permitted creation destinations. |
 
+HTTP definitions instead support:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `url` | yes | MCP endpoint. Remote hosts require HTTPS; HTTP is accepted only for loopback. A disabled template may reference a missing declared URL variable. |
+| `token_env` | no | Name of one explicitly declared environment variable containing a Bearer token. The token value is hidden from representations and logs. |
+| `timeout_seconds` | no | Positive request timeout up to 300 seconds; default is 10. |
+| `max_request_bytes` | no | Bounded outbound JSON-RPC body size from 1 KiB through 32 MB. |
+| `max_response_bytes` | no | Bounded response body size from 1 KiB through 32 MB. |
+| `mutable_tools` | no | Original remote tool names requiring explicit mutation authorization. |
+
 Unknown fields, duplicate or ambiguous names, missing required fields, invalid
-directories, and unsupported transports are rejected before a process starts.
+directories, insecure remote HTTP URLs, and unsupported transports are rejected
+before a process starts or network request is made.
 Commands are passed with `shell=False`. On Windows only the built-in npx token
 expands to `cmd /d /s /c npx ...`, because npm installs npx as a command script;
 on other platforms it expands to `npx ...`. User-supplied command strings are
@@ -61,11 +83,12 @@ The default pharmacy process inherits the terminal environment and adds
 secrets. `${PYTHON_EXECUTABLE}` resolves to the interpreter running the host, and
 relative `cwd` values resolve from the configuration file.
 
-The declared substitutions are `${MCP_GIT_REPOSITORY_PATH}` and
-`${MCP_FILESYSTEM_ROOT}`. The loader rejects undeclared references and fails
-before starting a process when a required value is missing or empty. It does not
+The committed declared substitutions are `${MCP_GIT_REPOSITORY_PATH}`,
+`${MCP_FILESYSTEM_ROOT}`, `${PHARMACY_REMOTE_MCP_URL}`, and
+`${PHARMACY_MCP_HTTP_TOKEN}`. The loader rejects undeclared references and fails
+before starting a process when a required enabled value is missing or empty. It does not
 expand the environment wholesale, log environment mappings, or invoke a shell.
-Set this variable to an existing, absolute, dedicated Git repository before
+Set `MCP_GIT_REPOSITORY_PATH` to an existing, absolute, dedicated Git repository before
 using the default configuration. The value supplies both Git's
 `--repository` argument and the host's independent repository policy.
 Set `MCP_FILESYSTEM_ROOT` to an existing absolute dedicated directory. It is the
@@ -94,9 +117,17 @@ working without network access.
 The first Filesystem run may similarly populate npm's user cache. No
 `package.json`, lock file, or `node_modules` directory belongs in this project.
 
-To isolate pharmacy state, set `PHARMACY_MCP_DATABASE_PATH` in a private local
-configuration's `env` object. The host never writes or logs the complete child
-environment.
+To isolate local stdio pharmacy state, set `PHARMACY_MCP_DATABASE_PATH` in a
+private local configuration's `env` object. The host never writes or logs the
+complete child environment.
+
+The `pharmacy-remote` entry is disabled by default, so its URL and token may be
+absent without affecting `list-servers` or normal startup. To use it, copy the
+configuration to a private file, enable that entry, set its two declared
+variables, and start an HTTP Pharmacy endpoint. The host registers discovered
+tools as `pharmacy-remote__<tool>`. See the
+[local Streamable HTTP guide](streamable-http-guide.md) for a reproducible
+loopback setup and the exact header/session contract.
 
 ## Commands
 
@@ -142,8 +173,8 @@ python -m pharmacy_mcp.host.cli --config path/to/servers.json --log-file path/to
 ```
 
 `list-servers` reports configuration and current host state without starting
-children. Each other CLI invocation owns its child processes only for that
-command and closes their stdin afterward, allowing the servers to exit on EOF.
+servers. Each other CLI invocation owns its clients only for that command. It
+closes stdio children through EOF and closes HTTP sessions through DELETE.
 Invalid argument JSON and malformed namespaces fail with a nonzero status before
 a tool call. Unknown tools return a clear host error, and all started children
 are still closed.
@@ -325,7 +356,7 @@ Each line is one complete JSON object with:
 
 - `timestamp`: UTC ISO 8601 timestamp ending in `Z`;
 - `server`: configured server name;
-- `transport`: currently `stdio`;
+- `transport`: `stdio`, `http`, or `local` for host-only events;
 - `direction`: `outbound`, `inbound`, `diagnostic`, or `local`;
 - `message_type`: `request`, `notification`, `response`, `error`, `diagnostic`,
   `invalid`, `mutation_rejected`, `mutation_authorized`, or
@@ -350,8 +381,10 @@ a local event and no matching outbound `tools/call`; an authorized mutation has
 a local authorization event followed by normal protocol traffic.
 
 Sensitive keys are redacted recursively and case-insensitively in objects and
-arrays. The controlled key set is `api_key`, `apikey`, `authorization`, `token`,
-`access_token`, `password`, `secret`, and `client_secret`. Values become
+arrays. The controlled key set includes credentials (`api_key`, `apikey`,
+`authorization`, `token`, `access_token`, `password`, `secret`, and
+`client_secret`) plus medical/user inputs (`prescription_id`, `symptoms`,
+`allergies`, and `current_medications`). Values become
 `[REDACTED]`. Redaction operates on a copy and never changes the message sent to
 the child. The same redacted representation is used for optional stderr
 visualization. Child stderr diagnostics are also sanitized before display and
@@ -387,7 +420,7 @@ trace when needed.
 ## Safe cleanup
 
 Stop the host command before removing generated files. The host closes every
-started subprocess even when closing another server fails, and closes the log
+started subprocess and HTTP session even when closing another client fails, and closes the log
 automatically. Delete only a repository that you deliberately created for the
 demo; the host never deletes a user-provided path. Do not delete the versioned
 catalog or inventory JSON files. Never recursively remove the project root;
@@ -404,6 +437,7 @@ the complete three-server workflow and human confirmation point.
 - [Official MCP Filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 - [`@modelcontextprotocol/server-filesystem` on npm](https://www.npmjs.com/package/@modelcontextprotocol/server-filesystem)
 - [MCP lifecycle and version negotiation, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
+- [MCP Streamable HTTP transport, revision 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 - [Gemini generateContent API](https://ai.google.dev/api/generate-content)
 - [Gemini function calling](https://ai.google.dev/gemini-api/docs/function-calling)
 - [Anthropic Messages API](https://platform.claude.com/docs/en/api/http/messages/create)

@@ -65,11 +65,21 @@ from .llm import (
 from .config import (
     DEFAULT_CONFIG_PATH,
     FilesystemPolicyConfig,
+    HTTPServerConfig,
     HostConfig,
     HostConfigurationError,
     RepositoryPolicyConfig,
     StdioServerConfig,
     load_host_config,
+)
+from .http_client import (
+    ACCEPT_HEADER,
+    PROTOCOL_HEADER,
+    SESSION_HEADER,
+    HTTPMCPClient,
+    MCPHTTPRequest,
+    MCPHTTPResponse,
+    MCPUrllibHTTPTransport,
 )
 from .manager import (
     NAMESPACE_SEPARATOR,
@@ -142,6 +152,8 @@ __all__ = [
     "FilesystemPolicyViolation",
     "HostConfig",
     "HostConfigurationError",
+    "HTTPMCPClient",
+    "HTTPServerConfig",
     "MCPHostError",
     "MCPLogError",
     "MCPProtocolError",
@@ -162,6 +174,9 @@ __all__ = [
     "DEFAULT_MAX_USER_INPUT_CHARS",
     "HTTPRequest",
     "HTTPResponse",
+    "MCPHTTPRequest",
+    "MCPHTTPResponse",
+    "MCPUrllibHTTPTransport",
     "RegisteredTool",
     "RepositoryPolicyConfig",
     "RepositoryPolicyViolation",
@@ -208,4 +223,7 @@ __all__ = [
     "messages_for_gemini",
     "provider_from_environ",
     "tools_for_gemini",
+    "ACCEPT_HEADER",
+    "PROTOCOL_HEADER",
+    "SESSION_HEADER",
 ]

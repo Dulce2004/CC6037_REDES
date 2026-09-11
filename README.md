@@ -4,12 +4,12 @@
 
 PharmaMCP is an academic pharmacy project that demonstrates a local Model Context
 Protocol (MCP) server built manually on JSON-RPC 2.0. The protocol messages,
-server lifecycle, method dispatch, tool registry, and stdio transport use only the
-Python standard library. The project does not use FastMCP, an MCP SDK, or an
-external JSON-RPC package.
+server lifecycle, method dispatch, tool registry, stdio transport, and
+Streamable HTTP transport use only the Python standard library. The project does
+not use FastMCP, an MCP SDK, a web framework, or an external JSON-RPC package.
 
-The current server accepts newline-delimited JSON-RPC messages over standard
-input and returns protocol responses over standard output. A configurable
+The Pharmacy server accepts newline-delimited JSON-RPC over standard streams or
+one JSON-RPC message per HTTP POST at `/mcp`. A configurable
 terminal host can launch that server plus the pinned official Git and Filesystem
 MCP servers as independent child processes, discover namespaced tools
 dynamically, and invoke them while recording a bounded, redacted JSONL protocol
@@ -38,8 +38,12 @@ The implemented MCP subset supports:
   `get_medication_details`, `check_interactions`, `check_stock`,
   `create_order`, and `get_order_status`.
 - A manual stdio transport using UTF-8 NDJSON framing: one JSON object per line.
+- A manual, non-streaming subset of MCP Streamable HTTP over `/mcp`, with
+  explicit isolated sessions, strict UTF-8 and body limits, protocol-version
+  headers, optional Bearer authentication, Origin allowlisting, and `/health`.
 - A configurable multi-server host with subprocess lifecycle management and
-  reversible namespaced tool routing such as `pharmacy__check_stock`.
+  an `urllib` HTTP client, plus reversible namespaced tool routing such as
+  `pharmacy__check_stock` and `pharmacy-remote__check_stock`.
 - A technical host CLI that lists configured servers, discovers tools, invokes
   tools, and appends redacted MCP traffic to a durable JSONL file.
 - A Gemini-first terminal chat with optional Anthropic support, dynamically
@@ -80,10 +84,10 @@ SQLite; subsequent stock calls read that same state.
   prescription references, and atomic all-or-nothing stock updates.
 - Standard-input/standard-output process transport without replacing the
   existing in-memory client-server path.
-- Strict local JSON configuration for one or more stdio servers. The committed
+- Strict local JSON configuration for stdio and HTTP servers. The committed
   configuration enables local `pharmacy` and the pinned external `git` and
-  `filesystem` servers. Only explicitly declared environment variables can be
-  substituted.
+  `filesystem` servers, and includes a disabled `pharmacy-remote` template.
+  Only explicitly declared environment variables can be substituted.
 - Unit, integration, lifecycle, catalog, transactional order, concurrency, and
   subprocess client/transport tests.
 
@@ -95,9 +99,9 @@ Terminal host CLI
   -> dynamically converted tool definitions / in-memory conversation
   -> MCP server manager
   -> namespaced registry: <server>__<tool>
-  -> one manual stdio MCP client per configured server
-  -> pharmacy + official Git + official Filesystem MCP child processes
-  -> stdin/stdout: one UTF-8 JSON-RPC object per line
+  -> manual stdio client -> pharmacy + official Git + Filesystem child processes
+  -> manual HTTP client -> optional remote Pharmacy /mcp endpoint
+  -> NDJSON over stdin/stdout or one JSON-RPC message per HTTP POST
   -> dynamically discovered server tool registries
   -> pharmacy domain / SQLite or one bounded disposable Git+Filesystem root
 ```
@@ -131,6 +135,12 @@ The stdio loop owns one `PharmacyMCPServer` instance, so lifecycle state is
 preserved across input lines until EOF. Protocol output is reserved for stdout;
 unexpected transport diagnostics go to stderr.
 
+The HTTP entry point creates one independent `PharmacyMCPServer` per secure
+session ID. Requests inside a session are serialized while different sessions
+may run concurrently. Session count, inactivity lifetime, request size, and
+socket timeouts are bounded. This increment intentionally supports JSON
+responses only; it advertises no SSE stream and returns `405` for `GET /mcp`.
+
 The stdio entry point initializes `runtime/pharmacy.sqlite3` explicitly. That
 runtime directory is ignored by Git. Set `PHARMACY_MCP_DATABASE_PATH` to use a
 different database file. A new database is seeded from the validated catalog and
@@ -144,7 +154,7 @@ files.
 ```text
 .
 |-- config/
-|   `-- mcp-servers.json  # Local stdio server definitions for the host
+|   `-- mcp-servers.json  # Local stdio plus optional HTTP server definitions
 |-- docs/
 |   |-- Proyecto 1 - Uso de un protocolo existente.pdf
 |   |-- demo-guide.md
@@ -152,15 +162,16 @@ files.
 |   |-- git-mcp-demo.md
 |   |-- chatbot-guide.md
 |   |-- mcp-host-guide.md
+|   |-- streamable-http-guide.md
 |   `-- mcp-server-specification.md
 |-- src/
 |   `-- pharmacy_mcp/
 |       |-- client/       # Existing in-memory client and interactive CLI
-|       |-- host/         # Config, subprocess client, manager, and host CLI
+|       |-- host/         # Config, stdio/HTTP clients, manager, and host CLI
 |       |-- jsonrpc/      # Manual JSON-RPC messages, errors, and conversion
 |       |-- pharmacy/     # Assessment, catalog, interactions, inventory, and data
-|       `-- server/       # MCP core, tool adapter, and stdio entry point
-|-- tests/                # Unit, integration, lifecycle, and stdio tests
+|       `-- server/       # MCP core, tool adapter, stdio and HTTP entry points
+|-- tests/                # Unit, integration, lifecycle, stdio, and HTTP tests
 |-- README.md
 `-- requirements.txt
 ```
@@ -217,6 +228,24 @@ The existing interactive in-memory client can still be started with:
 ```bash
 PYTHONPATH=src python -m pharmacy_mcp.client.cli
 ```
+
+## Start the local Streamable HTTP server
+
+For a loopback-only development server in PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:HOST = "127.0.0.1"
+$env:PORT = "8080"
+$env:PHARMACY_MCP_HTTP_TOKEN = "replace-with-a-local-test-token"
+python -B -m pharmacy_mcp.server.http
+```
+
+The endpoint is `http://127.0.0.1:8080/mcp` and its health check is
+`http://127.0.0.1:8080/health`. See the
+[Streamable HTTP guide](docs/streamable-http-guide.md) for exact headers,
+session flow, limits, Origin policy, host configuration, and safe examples.
+Remote hosts require HTTPS; no Cloud Run service is deployed by this project.
 
 ## Use the configurable terminal host
 
@@ -290,6 +319,7 @@ No test contacts either provider or consumes API quota or credits.
 - [Local MCP server specification](docs/mcp-server-specification.md)
 - [Reproducible stdio demonstration guide](docs/demo-guide.md)
 - [Configurable terminal host guide](docs/mcp-host-guide.md)
+- [Local Streamable HTTP transport guide](docs/streamable-http-guide.md)
 - [Gemini and Anthropic chatbot and tool-loop guide](docs/chatbot-guide.md)
 - [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
 - [Combined Filesystem and Git MCP demonstration](docs/filesystem-git-mcp-demo.md)
@@ -300,10 +330,10 @@ through a complete manual handshake and tool call.
 
 ## Current limitations
 
-- Only local stdio and direct in-memory communication are implemented; there is
-  no HTTP or remote transport.
-- Messages are processed sequentially by one server instance; there is no
-  concurrent request execution.
+- Streamable HTTP is local and non-streaming: SSE, resumability, and a deployed
+  remote service are not implemented.
+- Stdio messages and messages inside one HTTP session are processed
+  sequentially. Separate HTTP sessions may execute concurrently.
 - NDJSON batches and multi-line JSON documents are not supported.
 - Orders have only the initial `created` status; payment, fulfillment,
   cancellation, delivery, and stock restoration are not implemented.
@@ -314,10 +344,13 @@ through a complete manual handshake and tool call.
 - Prompts, resources, pagination, cancellation, progress, logging messages,
   subscriptions, server-initiated requests, and tool-list change notifications
   are not implemented.
-- There is no authentication because the server is a local child process using
-  stdio.
-- MCP servers remain local stdio processes; there is no MCP HTTP transport,
-  remote Pharmacy server, Git remote operation, web UI, or streaming response.
+- Stdio has no network authentication. HTTP supports a configured Bearer token
+  and explicit Origin allowlist but is not a production identity system.
+- The configured remote Pharmacy entry is disabled by default. There is no
+  deployed Pharmacy service, Git remote operation, web UI, or SSE response.
+- SQLite is durable only on one local filesystem. A container filesystem is
+  ephemeral and multiple service instances cannot safely share this database;
+  a production deployment needs a managed database.
 - Conversation memory exists only for the current `chat` process. Both provider
   clients make non-streaming requests. Gemini performs no automatic retries by
   default; optional retries are low and bounded.
@@ -333,7 +366,9 @@ The following items are planned possibilities, not implemented functionality:
 
 - Add later fulfillment and cancellation transitions if the course scope
   requires them.
-- Add Streamable HTTP and a remote-server deployment.
+- Add Docker and a single-instance Cloud Run academic demonstration, then
+  replace SQLite with a managed database before any production design.
+- Add the separate web interface after the remote demonstration is validated.
 - Capture and analyze later network transports with Wireshark.
 
 ## Technical references

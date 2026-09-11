@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 
 from pharmacy_mcp.jsonrpc.messages import JsonValue
 
-from .config import HostConfig, StdioServerConfig
+from .config import HTTPServerConfig, HostConfig, ServerConfig, StdioServerConfig
+from .http_client import HTTPMCPClient
 from .policy import (
     FilesystemPolicyViolation,
     RepositoryPolicyViolation,
@@ -96,7 +97,7 @@ class MCPServerManager:
         self._protocol_logger = (
             protocol_logger if protocol_logger is not None else MCPProtocolLogger()
         )
-        self._clients: dict[str, StdioMCPClient] = {}
+        self._clients: dict[str, StdioMCPClient | HTTPMCPClient] = {}
         self._tools: dict[str, RegisteredTool] = {}
         self._start_failures: set[str] = set()
 
@@ -137,10 +138,20 @@ class MCPServerManager:
         if existing is not None:
             self.stop_server(server_name)
 
-        client = StdioMCPClient(
-            config,
-            protocol_logger=self._protocol_logger,
-        )
+        if isinstance(config, StdioServerConfig):
+            client: StdioMCPClient | HTTPMCPClient = StdioMCPClient(
+                config,
+                protocol_logger=self._protocol_logger,
+            )
+        elif isinstance(config, HTTPServerConfig):
+            client = HTTPMCPClient(
+                config,
+                protocol_logger=self._protocol_logger,
+            )
+        else:  # pragma: no cover - HostConfig already enforces this invariant.
+            raise MCPHostError(
+                f"Server '{server_name}' has an unsupported transport."
+            )
         try:
             client.start()
             definitions = client.list_tools()
@@ -263,7 +274,11 @@ class MCPServerManager:
             raise MCPHostError(f"Server '{tool.server_name}' is not ready.")
         config = self._configs[tool.server_name]
         prepared_arguments = arguments
-        policy = config.repository_policy
+        policy = (
+            config.repository_policy
+            if isinstance(config, StdioServerConfig)
+            else None
+        )
         if policy is not None:
             try:
                 prepared_arguments = prepare_repository_invocation(
@@ -292,7 +307,11 @@ class MCPServerManager:
                         "global_tool": tool.namespaced_name,
                     },
                 )
-        filesystem_policy = config.filesystem_policy
+        filesystem_policy = (
+            config.filesystem_policy
+            if isinstance(config, StdioServerConfig)
+            else None
+        )
         if filesystem_policy is not None:
             try:
                 invocation = prepare_filesystem_invocation(
@@ -352,9 +371,11 @@ class MCPServerManager:
         config = self._configs[tool.server_name]
         if tool.server_name == "pharmacy":
             return tool.tool_name == "create_order"
-        if config.repository_policy is not None:
+        if isinstance(config, HTTPServerConfig):
+            return tool.tool_name in config.mutable_tools
+        if isinstance(config, StdioServerConfig) and config.repository_policy is not None:
             return tool.tool_name in config.repository_policy.mutable_tools
-        if config.filesystem_policy is not None:
+        if isinstance(config, StdioServerConfig) and config.filesystem_policy is not None:
             return not is_read_only_tool(tool.annotations)
         return not is_read_only_tool(tool.annotations)
 
@@ -380,7 +401,7 @@ class MCPServerManager:
 
     def _registered_definitions(
         self,
-        config: StdioServerConfig,
+        config: ServerConfig,
         definitions: tuple[dict[str, JsonValue], ...],
     ) -> tuple[RegisteredTool, ...]:
         registered: list[RegisteredTool] = []
@@ -437,7 +458,7 @@ class MCPServerManager:
             names_seen.add(namespaced_name)
         return tuple(registered)
 
-    def _require_config(self, server_name: str) -> StdioServerConfig:
+    def _require_config(self, server_name: str) -> ServerConfig:
         try:
             return self._configs[server_name]
         except (KeyError, TypeError) as exc:

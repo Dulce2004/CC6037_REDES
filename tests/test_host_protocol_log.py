@@ -104,6 +104,10 @@ class MCPProtocolLoggerTests(unittest.TestCase):
             "method": "tools/call",
             "params": {
                 "API_KEY": "alpha",
+                "prescription_id": "RX-PRIVATE-001",
+                "symptoms": "private symptom description",
+                "allergies": ["private allergy"],
+                "current_medications": ["private medication"],
                 "nested": [
                     {"ApiKey": "bravo", "AUTHORIZATION": "charlie"},
                     {
@@ -137,6 +141,10 @@ class MCPProtocolLoggerTests(unittest.TestCase):
             "foxtrot",
             "golf",
             "hotel",
+            "RX-PRIVATE-001",
+            "private symptom description",
+            "private allergy",
+            "private medication",
         ):
             self.assertNotIn(secret, serialized_log)
             self.assertNotIn(secret, visible_log)

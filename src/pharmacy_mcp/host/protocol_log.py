@@ -32,6 +32,10 @@ _SENSITIVE_KEYS = {
     "password",
     "secret",
     "client_secret",
+    "prescription_id",
+    "symptoms",
+    "allergies",
+    "current_medications",
 }
 _SENSITIVE_TEXT_PATTERN = re.compile(
     r"(?i)\b(api_key|apikey|authorization|token|access_token|password|secret|"

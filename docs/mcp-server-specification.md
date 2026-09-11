@@ -8,8 +8,8 @@ and a limited subset of Model Context Protocol (MCP) revision `2025-11-25`.
 
 The project intentionally does not use FastMCP, an MCP SDK, or an external
 JSON-RPC library. Python data classes validate protocol messages, a stateful
-server dispatches MCP methods, and a small stdio adapter connects that server to
-a client process.
+server dispatches MCP methods, and small stdio and Streamable HTTP adapters
+connect that same core to clients.
 
 The implementation is not a complete MCP server. The only advertised server
 primitive is tools. Seven tools are registered: `assess_symptoms`,
@@ -74,15 +74,43 @@ between input lines. The stdio entry point explicitly initializes
 file. A new database is seeded from the validated catalog and inventory JSON,
 which remain unchanged.
 
+### Streamable HTTP adapter
+
+The same server core is available locally with:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:HOST = "127.0.0.1"
+$env:PORT = "8080"
+$env:PHARMACY_MCP_HTTP_TOKEN = "replace-with-a-local-test-token"
+python -B -m pharmacy_mcp.server.http
+```
+
+`POST /mcp` accepts one strict UTF-8 JSON-RPC object. Requests return one JSON
+object with HTTP `200`; valid notifications return HTTP `202` with no body.
+Each successful `initialize` without a session header creates an isolated server
+core and returns `MCP-Session-Id`. Later POSTs require that session plus
+`MCP-Protocol-Version: 2025-11-25`; `DELETE /mcp` closes only that session.
+`GET /mcp` returns `405` because SSE is not implemented. `/health` is a plain
+HTTP health endpoint and never processes MCP.
+
+The HTTP adapter bounds request size, socket time, active sessions, and session
+idle lifetime. If configured, Bearer authentication is compared without
+timing-sensitive equality and `Origin` must exactly match an explicit allowlist.
+Unauthenticated operation is permitted by default only on loopback. See
+[the Streamable HTTP guide](streamable-http-guide.md) for the complete contract.
+
 ### Transport-level limitations
 
-- Input is processed sequentially, one line at a time.
+- Stdio input is processed sequentially, one line at a time. HTTP requests are
+  serialized inside each session; independent sessions may run concurrently.
 - JSON-RPC batch arrays are not supported.
-- Multi-line JSON documents are not supported.
+- Multi-line JSON documents are not supported by the NDJSON stdio adapter.
 - The server does not send unsolicited requests or notifications.
 - There is no MCP shutdown method. The client terminates the local process by
   closing stdin.
-- There is no HTTP, socket, URL, port, TLS, or remote transport.
+- The HTTP adapter does not implement SSE, resumability, or server-initiated
+  streams. TLS termination and deployment are outside this local increment.
 - The existing direct in-memory client remains separate from this adapter.
 
 ## Lifecycle
@@ -95,7 +123,8 @@ The expected session sequence is:
 3. The client sends `notifications/initialized` without an `id`.
 4. The server enters `READY` and writes no response for the notification.
 5. The client may send `tools/list` and `tools/call` requests.
-6. The client closes stdin when finished; EOF terminates the process.
+6. A stdio client closes stdin when finished; an HTTP client sends DELETE with
+   the session and protocol headers.
 
 ### Implemented states
 
@@ -105,8 +134,9 @@ The expected session sequence is:
 | `INITIALIZING` | Successful `initialize` | `notifications/initialized` transitions the server to `READY`. Tool requests still return `-32002`. A second `initialize` returns `-32600`. |
 | `READY` | Valid initialized notification after initialization | `tools/list` and `tools/call` are available. A repeated initialized notification is ignored. A new `initialize` returns `-32600`. |
 
-State changes apply to the active process only and are not persisted after EOF.
-An unsupported protocol version leaves the server in `UNINITIALIZED`.
+State changes apply to the active stdio process or individual HTTP session and
+are not persisted after EOF or session deletion. An unsupported protocol
+version leaves the server in `UNINITIALIZED`.
 
 All notifications are response-free. If a server handler detects an error while
 processing a message without an `id`, that error is suppressed rather than being

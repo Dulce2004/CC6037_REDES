@@ -1,16 +1,18 @@
-"""Strict loader for stdio MCP servers configured for the host."""
+"""Strict loader for stdio and Streamable HTTP MCP host configuration."""
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_CONFIG_PATH = (
     Path(__file__).resolve().parents[3] / "config" / "mcp-servers.json"
@@ -18,7 +20,7 @@ DEFAULT_CONFIG_PATH = (
 
 _SERVER_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _NAMESPACE_SEPARATOR = "__"
-_SERVER_KEYS = {
+_STDIO_SERVER_KEYS = {
     "name",
     "transport",
     "command",
@@ -31,11 +33,23 @@ _SERVER_KEYS = {
     "repository_policy",
     "filesystem_policy",
 }
+_HTTP_SERVER_KEYS = {
+    "name",
+    "transport",
+    "url",
+    "enabled",
+    "timeout_seconds",
+    "max_request_bytes",
+    "max_response_bytes",
+    "token_env",
+    "mutable_tools",
+}
 _ROOT_KEYS = {"servers", "variables"}
 _VARIABLE_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _VARIABLE_REFERENCE_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _ARGUMENT_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-][A-Za-z0-9_-]*$")
+_BEARER_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~+/-]{1,4096}=*$")
 _REPOSITORY_POLICY_KEYS = {"root", "argument", "mutable_tools"}
 _FILESYSTEM_POLICY_KEYS = {
     "root",
@@ -242,10 +256,82 @@ class StdioServerConfig:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class HTTPServerConfig:
+    """Validated configuration for one Streamable HTTP MCP endpoint."""
+
+    name: str
+    url: str | None
+    token: str | None = field(default=None, repr=False)
+    token_env: str | None = None
+    timeout_seconds: float = 10.0
+    max_request_bytes: int = 1_000_000
+    max_response_bytes: int = 2_000_000
+    enabled: bool = True
+    transport: str = "http"
+    mutable_tools: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.name, str)
+            or not _SERVER_NAME_PATTERN.fullmatch(self.name)
+            or _NAMESPACE_SEPARATOR in self.name
+            or self.name.endswith("_")
+        ):
+            raise HostConfigurationError(
+                "Server names must start with a letter and contain only "
+                "letters, digits, underscores, or hyphens, without '__' and "
+                "without a trailing underscore."
+            )
+        if self.transport != "http":
+            raise HostConfigurationError("HTTP server transport must be 'http'.")
+        if not isinstance(self.enabled, bool):
+            raise HostConfigurationError("Server 'enabled' must be a boolean.")
+        if self.url is None:
+            if self.enabled:
+                raise HostConfigurationError(
+                    "Enabled HTTP server 'url' must be configured."
+                )
+        elif not isinstance(self.url, str):
+            raise HostConfigurationError("HTTP server 'url' must be a string.")
+        else:
+            object.__setattr__(self, "url", _validate_http_server_url(self.url))
+        if self.token is not None and (
+            not isinstance(self.token, str)
+            or not _BEARER_TOKEN_PATTERN.fullmatch(self.token)
+        ):
+            raise HostConfigurationError(
+                "HTTP server token must be a non-empty string when configured."
+            )
+        if self.token_env is not None and (
+            not isinstance(self.token_env, str)
+            or not _VARIABLE_NAME_PATTERN.fullmatch(self.token_env)
+        ):
+            raise HostConfigurationError(
+                "HTTP server 'token_env' must name a declared environment variable."
+            )
+        _validate_timeout(self.timeout_seconds, "timeout_seconds")
+        _validate_body_limit(self.max_request_bytes, "max_request_bytes")
+        _validate_body_limit(self.max_response_bytes, "max_response_bytes")
+        if (
+            not isinstance(self.mutable_tools, frozenset)
+            or not all(
+                isinstance(name, str)
+                and _TOOL_NAME_PATTERN.fullmatch(name)
+                and _NAMESPACE_SEPARATOR not in name
+                for name in self.mutable_tools
+            )
+        ):
+            raise HostConfigurationError(
+                "HTTP server mutable tool names are invalid."
+            )
+ServerConfig = StdioServerConfig | HTTPServerConfig
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class HostConfig:
     """Non-empty server collection with unique names."""
 
-    servers: tuple[StdioServerConfig, ...]
+    servers: tuple[ServerConfig, ...]
     variables: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -253,7 +339,10 @@ class HostConfig:
             raise HostConfigurationError(
                 "Host configuration must contain at least one server."
             )
-        if not all(isinstance(server, StdioServerConfig) for server in self.servers):
+        if not all(
+            isinstance(server, (StdioServerConfig, HTTPServerConfig))
+            for server in self.servers
+        ):
             raise HostConfigurationError(
                 "Host configuration contains an invalid server."
             )
@@ -337,21 +426,46 @@ def _parse_server(
     index: int,
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
-) -> StdioServerConfig:
+) -> ServerConfig:
     label = f"servers[{index}]"
     if not isinstance(value, dict) or not all(
         isinstance(key, str) for key in value
     ):
         raise HostConfigurationError(f"'{label}' must be an object.")
-    unexpected = sorted(set(value) - _SERVER_KEYS)
+    for required in ("name", "transport"):
+        if required not in value:
+            raise HostConfigurationError(f"'{label}.{required}' is required.")
+
+    transport = value["transport"]
+    if transport == "stdio":
+        return _parse_stdio_server(
+            value,
+            config_directory,
+            label,
+            declared_variables,
+            environ,
+        )
+    if transport == "http":
+        return _parse_http_server(value, label, declared_variables, environ)
+    raise HostConfigurationError(
+        f"'{label}.transport' must be either 'stdio' or 'http'."
+    )
+
+
+def _parse_stdio_server(
+    value: dict[str, object],
+    config_directory: Path,
+    label: str,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
+) -> StdioServerConfig:
+    unexpected = sorted(set(value) - _STDIO_SERVER_KEYS)
     if unexpected:
         raise HostConfigurationError(
             f"Unexpected fields in '{label}': {', '.join(unexpected)}."
         )
-
-    for required in ("name", "transport", "command"):
-        if required not in value:
-            raise HostConfigurationError(f"'{label}.{required}' is required.")
+    if "command" not in value:
+        raise HostConfigurationError(f"'{label}.command' is required.")
 
     raw_args = value.get("args", [])
     if not isinstance(raw_args, list) or not all(
@@ -443,6 +557,84 @@ def _parse_server(
             declared_variables,
             environ,
         ),
+    )
+
+
+def _parse_http_server(
+    value: dict[str, object],
+    label: str,
+    declared_variables: tuple[str, ...],
+    environ: Mapping[str, str],
+) -> HTTPServerConfig:
+    unexpected = sorted(set(value) - _HTTP_SERVER_KEYS)
+    if unexpected:
+        raise HostConfigurationError(
+            f"Unexpected fields in '{label}': {', '.join(unexpected)}."
+        )
+    if "url" not in value:
+        raise HostConfigurationError(f"'{label}.url' is required.")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise HostConfigurationError(f"'{label}.enabled' must be a boolean.")
+    raw_url = value["url"]
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        raise HostConfigurationError(f"'{label}.url' must be a non-empty string.")
+    expanded_url = _substitute_variables(
+        raw_url,
+        declared_variables,
+        environ,
+        f"{label}.url",
+        allow_missing=not enabled,
+    )
+    url = expanded_url if expanded_url.strip() else None
+
+    token_env = value.get("token_env")
+    if token_env is not None:
+        if (
+            not isinstance(token_env, str)
+            or not _VARIABLE_NAME_PATTERN.fullmatch(token_env)
+        ):
+            raise HostConfigurationError(
+                f"'{label}.token_env' must be an uppercase variable name."
+            )
+        if token_env not in declared_variables:
+            raise HostConfigurationError(
+                f"'{label}.token_env' references undeclared variable "
+                f"'{token_env}'."
+            )
+    token = environ.get(token_env) if isinstance(token_env, str) else None
+    if token == "":
+        token = None
+
+    raw_mutable_tools = value.get("mutable_tools", [])
+    if not isinstance(raw_mutable_tools, list):
+        raise HostConfigurationError(f"'{label}.mutable_tools' must be an array.")
+    try:
+        mutable_tools = frozenset(raw_mutable_tools)
+    except TypeError as exc:
+        raise HostConfigurationError(
+            f"'{label}.mutable_tools' must contain strings."
+        ) from exc
+    if len(mutable_tools) != len(raw_mutable_tools):
+        raise HostConfigurationError(
+            f"'{label}.mutable_tools' must not contain duplicates."
+        )
+
+    return HTTPServerConfig(
+        name=value["name"],
+        url=url,
+        token=token,
+        token_env=token_env,
+        timeout_seconds=_optional_timeout(
+            value,
+            "timeout_seconds",
+            10.0,
+            label,
+        ),
+        max_request_bytes=value.get("max_request_bytes", 1_000_000),
+        max_response_bytes=value.get("max_response_bytes", 2_000_000),
+        enabled=enabled,
+        mutable_tools=mutable_tools,
     )
 
 
@@ -647,6 +839,8 @@ def _substitute_variables(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
     label: str,
+    *,
+    allow_missing: bool = False,
 ) -> str:
     def replace(match: re.Match[str]) -> str:
         variable_name = match.group(1)
@@ -656,6 +850,8 @@ def _substitute_variables(
             )
         replacement = environ.get(variable_name)
         if not isinstance(replacement, str) or not replacement.strip():
+            if allow_missing:
+                return ""
             raise HostConfigurationError(
                 f"Required variable '{variable_name}' is missing or empty."
             )
@@ -667,6 +863,50 @@ def _substitute_variables(
             f"'{label}' contains an invalid variable reference."
         )
     return expanded
+
+
+def _validate_http_server_url(value: str) -> str:
+    if (
+        not value.strip()
+        or len(value) > 2_048
+        or any(ord(character) <= 0x20 for character in value)
+    ):
+        raise HostConfigurationError("HTTP server 'url' must be a non-empty URL.")
+    parsed = urlsplit(value.strip())
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise HostConfigurationError("HTTP server 'url' has an invalid port.") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or (parsed_port is not None and not 1 <= parsed_port <= 65_535)
+    ):
+        raise HostConfigurationError("HTTP server 'url' is invalid.")
+    if parsed.scheme == "http" and not _is_loopback_url_host(parsed.hostname):
+        raise HostConfigurationError(
+            "Remote MCP servers require HTTPS; HTTP is allowed only on loopback."
+        )
+    if not parsed.path or parsed.path == "/":
+        raise HostConfigurationError(
+            "HTTP server 'url' must include its MCP endpoint path."
+        )
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")
+    )
+
+
+def _is_loopback_url_host(host: str) -> bool:
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _optional_timeout(
@@ -690,6 +930,18 @@ def _validate_timeout(value: object, field_name: str) -> None:
     ):
         raise HostConfigurationError(
             f"'{field_name}' must be a number greater than 0 and at most 300."
+        )
+
+
+def _validate_body_limit(value: object, field_name: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1_024
+        or value > 32_000_000
+    ):
+        raise HostConfigurationError(
+            f"'{field_name}' must be an integer from 1024 through 32000000."
         )
 
 
