@@ -193,6 +193,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"status": "ok"})
         self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(self.server.sessions.active_count, 0)
 
         session_id = self.initialize_ready()
         listed = self.request(session_id, "tools/list", {}, 2)

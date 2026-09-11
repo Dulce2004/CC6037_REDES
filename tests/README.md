@@ -53,3 +53,12 @@ normalized fake Anthropic responses while starting all three real MCP
 processes. They cover general conversation, context, Pharmacy, Git, Filesystem,
 multiple calls, mutation decisions, safe logging, and process cleanup. No test
 calls either provider or consumes quota or credits.
+
+`test_container_artifacts.py` validates the Pharmacy HTTP Dockerfile,
+non-`latest` Python slim base, non-root user, Cloud Run bind/port environment,
+exact startup command, selective runtime copies, secret-free build settings,
+the reduced `.dockerignore`, retained Pharmacy JSON data, public-bind token
+requirement, and documentation. These checks are portable and do not invoke
+Docker. A real image/container smoke test is intentionally manual and separate
+from the normal suite; follow `docs/container-cloud-run-guide.md` only when a
+Docker daemon is already available.

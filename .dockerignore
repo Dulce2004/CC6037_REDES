@@ -1,0 +1,63 @@
+# Source control and repository metadata
+.git/
+.gitignore
+
+# Documentation, tests, configuration, and local project state
+docs/
+tests/
+config/
+runtime/
+tmp/
+README.md
+requirements.txt
+*.pdf
+
+# Components not required by the Pharmacy HTTP server image
+src/pharmacy_mcp/client/
+src/pharmacy_mcp/host/
+
+# Python caches, environments, packaging, and coverage
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Runtime databases, journals, logs, and temporary files
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.jsonl
+*.log
+*.tmp
+*.swp
+*~
+
+# Editors, operating-system files, and JavaScript artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+node_modules/
+
+# Local secrets and environment files
+.env
+.env.*
+*.pem
+*.key
+secrets.*

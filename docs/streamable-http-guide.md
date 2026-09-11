@@ -6,7 +6,9 @@ This increment exposes the existing seven-tool Pharmacy server through a manual,
 non-streaming subset of MCP Streamable HTTP revision `2025-11-25`. It reuses the
 same JSON-RPC parser, lifecycle, tool registry, domain handlers, and SQLite store
 as the in-memory and stdio paths. It adds no MCP SDK, web framework, third-party
-HTTP client, Docker image, cloud deployment, or browser interface.
+HTTP client, cloud deployment, or browser interface. A separate minimal
+Dockerfile now packages this existing entry point without changing the protocol
+or Pharmacy tools.
 
 The transports serve different development scenarios:
 
@@ -225,8 +227,11 @@ database, stronger identity and authorization, TLS at the service boundary,
 central session/state design, observability, and operational controls. Those
 items are deliberately outside this increment.
 
-Future work is limited to separate increments for Docker, a single-instance
-Cloud Run demonstration, Wireshark capture and analysis, and a web interface.
+The repository now includes container artifacts for local validation and a
+documented future single-instance Cloud Run demonstration. No cloud deployment
+has been performed. See the
+[container and Cloud Run preparation guide](container-cloud-run-guide.md).
+Wireshark capture and analysis and a web interface remain future work.
 
 ## Reference
 

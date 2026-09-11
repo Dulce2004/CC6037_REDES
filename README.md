@@ -141,6 +141,13 @@ may run concurrently. Session count, inactivity lifetime, request size, and
 socket timeouts are bounded. This increment intentionally supports JSON
 responses only; it advertises no SSE stream and returns `405` for `GET /mcp`.
 
+The root Dockerfile packages only the standard-library Pharmacy HTTP runtime in
+an official Python 3.12 slim image. It binds to `0.0.0.0`, honors `PORT`, runs as
+a non-root user, and stores its explicitly initialized SQLite database under
+`/tmp`. The container is suitable for a local demonstration and preparation for
+a single-instance Cloud Run exercise; its database and in-memory sessions are
+not durable.
+
 The stdio entry point initializes `runtime/pharmacy.sqlite3` explicitly. That
 runtime directory is ignored by Git. Set `PHARMACY_MCP_DATABASE_PATH` to use a
 different database file. A new database is seeded from the validated catalog and
@@ -157,6 +164,7 @@ files.
 |   `-- mcp-servers.json  # Local stdio plus optional HTTP server definitions
 |-- docs/
 |   |-- Proyecto 1 - Uso de un protocolo existente.pdf
+|   |-- container-cloud-run-guide.md
 |   |-- demo-guide.md
 |   |-- filesystem-git-mcp-demo.md
 |   |-- git-mcp-demo.md
@@ -172,6 +180,8 @@ files.
 |       |-- pharmacy/     # Assessment, catalog, interactions, inventory, and data
 |       `-- server/       # MCP core, tool adapter, stdio and HTTP entry points
 |-- tests/                # Unit, integration, lifecycle, stdio, and HTTP tests
+|-- .dockerignore         # Reduced, secret-safe Pharmacy image build context
+|-- Dockerfile            # Non-root Python 3.12 Pharmacy HTTP image
 |-- README.md
 `-- requirements.txt
 ```
@@ -246,6 +256,23 @@ The endpoint is `http://127.0.0.1:8080/mcp` and its health check is
 [Streamable HTTP guide](docs/streamable-http-guide.md) for exact headers,
 session flow, limits, Origin policy, host configuration, and safe examples.
 Remote hosts require HTTPS; no Cloud Run service is deployed by this project.
+
+## Build the Pharmacy HTTP container
+
+Docker is optional and is not required by the normal test suite. To build the
+minimal local image when a Docker daemon is available:
+
+```powershell
+docker build -t pharmacy-mcp-http:local .
+```
+
+The image contains neither the terminal host nor the Git, Filesystem, Gemini,
+or Anthropic integrations. A Bearer token must be supplied at runtime; it is
+never embedded during the build. See the
+[container and Cloud Run preparation guide](docs/container-cloud-run-guide.md)
+for the generated-token local run, loopback port publication, health check,
+exact cleanup, cost warning, and ephemeral SQLite limitations. The guide does
+not deploy or create any Google Cloud resource.
 
 ## Use the configurable terminal host
 
