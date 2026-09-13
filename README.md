@@ -49,6 +49,9 @@ The implemented MCP subset supports:
 - A Gemini-first terminal chat with optional Anthropic support, dynamically
   converted tools, multi-tool result correlation, bounded in-memory context,
   and per-operation confirmation for mutations.
+- A responsive loopback-only web chat built with the Python standard library
+  and native HTML/CSS/JavaScript, with independent in-memory browser sessions,
+  defensive same-origin headers, and single-use visual mutation confirmations.
 - Official external `mcp-server-git==2026.8.18` integration through `uvx`, with
   dynamically discovered `git__<tool>` names, an exact configured repository
   boundary, and explicit authorization for mutable tools.
@@ -94,7 +97,7 @@ SQLite; subsequent stock calls read that same state.
 ## Architecture
 
 ```text
-Terminal host CLI
+Terminal host CLI or local browser on 127.0.0.1
   -> chat orchestrator -> Gemini generateContent or Anthropic Messages REST API
   -> dynamically converted tool definitions / in-memory conversation
   -> MCP server manager

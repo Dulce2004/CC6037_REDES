@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Pharmacy MCP</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#composer">Ir al mensaje</a>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">Rx</div>
+      <div>
+        <p class="eyebrow">Asistente local con Model Context Protocol</p>
+        <h1>Pharmacy MCP</h1>
+      </div>
+      <div id="connection-pill" class="connection-pill" data-state="loading" role="status">
+        Conectando
+      </div>
+    </header>
+
+    <div id="connection-error" class="connection-error" role="alert" hidden>
+      No se pudo conectar con el backend local. Comprueba que el host siga activo.
+    </div>
+
+    <main class="workspace">
+      <aside class="status-panel" aria-labelledby="status-heading">
+        <div class="panel-heading">
+          <p class="eyebrow">Estado local</p>
+          <h2 id="status-heading">Conexiones</h2>
+        </div>
+
+        <section class="provider-card" aria-labelledby="provider-heading">
+          <h3 id="provider-heading">Proveedor LLM</h3>
+          <p id="provider-name" class="status-primary">Cargando…</p>
+          <p id="provider-model" class="status-secondary"></p>
+        </section>
+
+        <section aria-labelledby="servers-heading">
+          <h3 id="servers-heading">Servidores MCP</h3>
+          <ul id="server-list" class="server-list" aria-live="polite"></ul>
+        </section>
+
+        <div class="privacy-note">
+          <span aria-hidden="true">●</span>
+          Las credenciales permanecen en el proceso backend.
+        </div>
+      </aside>
+
+      <section class="chat-panel" aria-labelledby="conversation-heading">
+        <div class="chat-heading">
+          <div>
+            <p class="eyebrow">Sesión privada en memoria</p>
+            <h2 id="conversation-heading">Conversación</h2>
+          </div>
+          <button id="clear-button" class="button button-quiet" type="button">
+            Limpiar
+          </button>
+        </div>
+
+        <div id="message-list" class="message-list" role="log" aria-live="polite" aria-relevant="additions text">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-icon" aria-hidden="true">✦</div>
+            <h3>Consulta el entorno académico</h3>
+            <p>Pregunta por inventario, interacciones simuladas u órdenes ficticias. Las operaciones que cambien estado siempre pedirán confirmación.</p>
+          </div>
+        </div>
+
+        <div id="processing" class="processing" role="status" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Procesando respuesta…</span>
+        </div>
+
+        <form id="composer" class="composer">
+          <label for="message-input">Mensaje</label>
+          <div class="composer-row">
+            <textarea id="message-input" name="message" rows="2" maxlength="8000" placeholder="Escribe una consulta para Pharmacy MCP…" required></textarea>
+            <button id="send-button" class="button button-primary" type="submit">
+              Enviar
+            </button>
+          </div>
+          <div class="composer-help">
+            <span>Enter para enviar · Shift + Enter para nueva línea</span>
+            <span id="character-count">0 / 8000</span>
+          </div>
+        </form>
+
+        <div class="medical-warning" role="note">
+          <strong>Sistema académico.</strong>
+          No sustituye atención, diagnóstico ni consejo médico. No introduzcas datos reales de pacientes.
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-effect">
+    <form method="dialog" class="confirmation-card">
+      <div class="confirmation-icon" aria-hidden="true">!</div>
+      <p class="eyebrow">Confirmación individual</p>
+      <h2 id="confirmation-title">Operación mutable pendiente</h2>
+      <dl class="confirmation-details">
+        <div>
+          <dt>Servidor</dt>
+          <dd id="confirmation-server"></dd>
+        </div>
+        <div>
+          <dt>Tool</dt>
+          <dd id="confirmation-tool"></dd>
+        </div>
+        <div>
+          <dt>Efecto esperado</dt>
+          <dd id="confirmation-effect"></dd>
+        </div>
+        <div>
+          <dt>Argumentos saneados</dt>
+          <dd><code id="confirmation-arguments"></code></dd>
+        </div>
+      </dl>
+      <p id="confirmation-expiry" class="confirmation-expiry"></p>
+      <p class="confirmation-warning">Autoriza únicamente si reconoces esta operación concreta.</p>
+      <div class="confirmation-actions">
+        <button id="reject-button" class="button button-quiet" type="button" autofocus>
+          Rechazar
+        </button>
+        <button id="accept-button" class="button button-danger" type="button">
+          Autorizar una vez
+        </button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

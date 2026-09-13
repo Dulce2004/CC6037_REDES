@@ -6,11 +6,13 @@ The terminal `chat` command connects one selected LLM provider to the existing
 manual MCP host. Gemini Developer API is the default and recommended provider;
 Anthropic Messages remains an optional alternative. Both integrations use REST
 through Python's standard library. There is no Google or Anthropic SDK, agent
-framework, streaming transport, persistent conversation memory, or remote MCP
-server.
+framework, streaming LLM transport, or persistent conversation memory. The
+same chat is available in the terminal and through a loopback-only local web
+interface. Local and remote MCP servers are selected only by the existing host
+configuration.
 
 ```text
-terminal input
+terminal or local-browser input
   -> ChatOrchestrator (shared history, limits, confirmations, and tool loop)
       -> selected REST adapter: Gemini (default) or Anthropic
       <- normalized text and tool_use blocks
@@ -175,6 +177,127 @@ servers, and a short help hint. During the session:
 
 `/provider gemini` or any other attempt to switch provider is rejected locally.
 Blank input is ignored. EOF and `Ctrl+C` close the session safely.
+
+## Local web interface
+
+The web interface is a presentation layer over the same `ChatOrchestrator`,
+provider adapters, `ConversationHistory`, `MCPServerManager`, namespaced tools,
+policies, and redacted protocol logger used by the terminal. It does not contain
+a second tool loop or Pharmacy business logic.
+
+```text
+browser on 127.0.0.1
+  -> bounded same-origin JSON API
+  -> one in-memory ChatOrchestrator and ConversationHistory per browser cookie
+  -> selected Gemini or Anthropic REST adapter
+  -> shared MCPServerManager
+  -> configured local Pharmacy / Git / Filesystem and optional remote Pharmacy
+```
+
+From the repository root, set the same provider variables described above and
+the roots required by the committed host configuration. Use a dedicated
+disposable directory for Git and Filesystem demonstrations:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:LLM_PROVIDER = "gemini"
+$env:GEMINI_API_KEY = "set-in-this-process-only"
+$env:MCP_GIT_REPOSITORY_PATH = (Resolve-Path "path/to/disposable-repository").Path
+$env:MCP_FILESYSTEM_ROOT = $env:MCP_GIT_REPOSITORY_PATH
+python -B -m pharmacy_mcp.host.web
+```
+
+Open `http://127.0.0.1:8081/`. The default listener cannot bind to a non-loopback
+address. Useful local options are `--port`, `--config`, `--log-file`,
+`--history-max-messages`, `--confirmation-timeout-seconds`, and
+`--session-idle-seconds`. `Ctrl+C` closes the HTTP listener and all managed MCP
+servers. The default web log is `runtime/mcp-web.jsonl`.
+
+The committed configuration enables local Pharmacy, Git, and Filesystem and
+keeps `pharmacy-remote` disabled. To use the remote server, supply an explicitly
+reviewed alternate config that enables it plus `PHARMACY_REMOTE_MCP_URL` and
+`PHARMACY_MCP_HTTP_TOKEN`. The remote token remains in the backend process and
+is never included in browser state. Do not place provider keys or MCP tokens in
+the URL, web form, browser storage, or repository.
+
+### Local API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | Serve the self-contained local interface. |
+| `GET` | `/static/styles.css`, `/static/app.js` | Serve local static assets; no CDN is used. |
+| `GET` | `/api/status` | Return provider/model, sanitized MCP server status, limits, and this session's visible conversation. |
+| `GET` | `/api/chat` | Poll this browser session while a turn or confirmation is pending. |
+| `POST` | `/api/chat` | Start one turn with `{"message":"..."}`. Returns `202`; the browser polls for completion. |
+| `POST` | `/api/confirm` | Accept or reject one exact pending mutation. Omitting `accept` means rejection. |
+| `POST` | `/api/clear` | Clear only this browser's in-memory display and provider context. |
+
+Each browser receives a cryptographically random `HttpOnly`, `SameSite=Strict`
+session cookie. The identifier is not available to JavaScript and conversation
+state remains only in the backend process. Sessions are independent, bounded,
+and expire after inactivity. Restarting the process clears them.
+
+### Web confirmation flow
+
+When the shared orchestrator reaches a mutable tool, its worker pauses before
+`manager.invoke_tool`. The backend creates a short-lived, single-use pending
+confirmation containing only server, tool, expected effect, and the existing
+sanitized argument summary. The browser displays a modal whose focused/default
+action is **Reject**. Escape, omission of `accept`, timeout, closing the host, or
+an invalid identifier never authorizes the call. Only a subsequent
+`{"confirmation_id":"...","accept":true}` for that exact pending operation
+returns `sí` to the orchestrator and sets `allow_mutation=True` for that one
+invocation. Multiple mutations produce multiple confirmations; no session-wide
+authorization exists.
+
+### Web security and limits
+
+- Provider keys, MCP Bearer tokens, environment variables, private config,
+  process IDs, internal objects, traces, and full tool results are absent from
+  HTML and API responses.
+- The browser renders all server-supplied text with `textContent`, stores
+  nothing in `localStorage` or `sessionStorage`, and loads no remote assets.
+- Host validation limits requests to the active `127.0.0.1`/`localhost`
+  listener. Mutating requests reject cross-origin browser traffic and no CORS
+  allowlist or wildcard header is emitted.
+- CSP, frame denial, MIME sniffing protection, no-referrer, same-origin resource
+  policy, permissions policy, and `Cache-Control: no-store` are sent on every
+  response.
+- JSON requests are limited to 16,384 bytes, user messages to 8,000 characters,
+  visible messages and tool summaries are bounded, and API responses to 262,144
+  bytes. Only `application/json` encoded as UTF-8 is accepted; duplicate keys,
+  non-finite numbers, unknown fields, chunked bodies, and invalid UTF-8 fail
+  locally.
+- One browser session can process only one turn at a time. The process supports
+  at most 64 in-memory sessions by default. Provider, tool-round, tool-call,
+  history, tool-result, MCP, and HTTP limits remain independently enforced.
+
+Errors are intentionally concise and contain no traceback. The provider may be
+configured while one or more MCP servers show `error`; ready servers remain
+available. A connection banner, processing state, tool activity messages, and
+provider/server status make those conditions visible without exposing private
+configuration.
+
+### Reproducible web demonstration
+
+1. Use a disposable Git/Filesystem root and start the command above.
+2. Open `http://127.0.0.1:8081/` and verify the provider and ready MCP servers.
+3. Ask “Consulta el stock de MED-ANA-001 en zona-5”. Observe the read-only tool
+   activity and final answer.
+4. Ask for a fictitious order. Verify the individual modal, inspect its sanitized
+   summary, and choose **Reject** first; no order is created.
+5. Ask again and choose **Authorize once** only if the simulated operation is
+   expected. A later mutation must ask again.
+6. Select **Limpiar** and verify that the visible conversation and retained LLM
+   context are empty for that browser only.
+7. Stop with `Ctrl+C` and verify the managed MCP children close.
+
+This voluntary demonstration makes real requests to the selected provider and
+can consume quota. Gemini model availability and free/paid quota can change;
+review the active account limits before running it. Automated tests inject fake
+clients/transports and make no Gemini or Anthropic request. Never enter real
+patient names, clinical records, prescription data, credentials, or other
+sensitive personal information in this academic interface.
 
 ## Mutation confirmation
 
