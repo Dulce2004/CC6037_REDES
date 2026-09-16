@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
 import unittest
 from copy import deepcopy
+from email.message import Message
 from http.client import HTTPConnection
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
@@ -32,6 +36,7 @@ from pharmacy_mcp.host.web import (  # noqa: E402
     DEFAULT_WEB_PORT,
     DEFAULT_MAX_REQUEST_BYTES,
     PharmacyWebApplication,
+    PharmacyWebRequestHandler,
     PharmacyWebServer,
     build_parser,
 )
@@ -74,6 +79,36 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn(b"sessionStorage", javascript)
         self.assertNotIn(b"innerHTML", javascript)
         self.assertNotIn(b"cdn", css.lower() + javascript.lower())
+
+    def test_frontend_has_one_initial_status_request_and_keeps_chat_polling(self) -> None:
+        javascript = (
+            PROJECT_DIRECTORY
+            / "src"
+            / "pharmacy_mcp"
+            / "host"
+            / "web_static"
+            / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(javascript.count('requestJson("/api/status")'), 1)
+        self.assertEqual(javascript.count("\ninitialize();"), 1)
+        self.assertEqual(javascript.count('requestJson("/api/chat"'), 2)
+
+    def test_focus_ring_token_meets_contrast_requirement(self) -> None:
+        stylesheet = (
+            PROJECT_DIRECTORY
+            / "src"
+            / "pharmacy_mcp"
+            / "host"
+            / "web_static"
+            / "styles.css"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"--focus-ring:\s*(#[0-9a-fA-F]{6});", stylesheet)
+        self.assertIsNotNone(match)
+        focus_ring = match.group(1)
+        self.assertIn("outline: 3px solid var(--focus-ring);", stylesheet)
+        for background in ("#ffffff", "#fbfdfc", "#f3f7f5", "#fff2d9"):
+            with self.subTest(background=background):
+                self.assertGreaterEqual(_contrast_ratio(focus_ring, background), 3.0)
 
     def test_routes_and_methods_are_explicit(self) -> None:
         self.assertEqual(self._request("GET", "/missing")[0], 404)
@@ -120,7 +155,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(headers["cache-control"], "no-store")
         self.assertNotIn("access-control-allow-origin", headers)
 
-    def test_host_and_origin_checks_reject_cross_origin_requests(self) -> None:
+    def test_origin_check_rejects_post_with_body(self) -> None:
         status, _, _, _ = self._request(
             "POST",
             "/api/clear",
@@ -128,12 +163,90 @@ class PharmacyWebTests(unittest.TestCase):
             headers={"Origin": "https://attacker.example"},
         )
         self.assertEqual(status, 403)
+
+    def test_host_check_rejects_post_with_body(self) -> None:
         status, _, _, _ = self._request(
-            "GET",
-            "/api/status",
+            "POST",
+            "/api/clear",
+            payload={},
             headers={"Host": f"attacker.example:{self.port}"},
         )
         self.assertEqual(status, 421)
+
+    def test_rejected_post_body_is_drained_once(self) -> None:
+        handler, stream = _drain_handler(b"{}", {"Content-Length": "2"})
+        self.assertTrue(handler._drain_rejected_post_body("POST"))
+        self.assertTrue(handler._request_body_read_started)
+        self.assertTrue(handler._request_body_consumed)
+        self.assertEqual(stream.read_sizes, [2])
+
+        self.assertTrue(handler._drain_rejected_post_body("POST"))
+        self.assertEqual(stream.read_sizes, [2])
+
+        truncated, truncated_stream = _drain_handler(
+            b"{",
+            {"Content-Length": "2"},
+        )
+        self.assertFalse(truncated._drain_rejected_post_body("POST"))
+        self.assertTrue(truncated._request_body_read_started)
+        self.assertFalse(truncated._request_body_consumed)
+        self.assertEqual(truncated_stream.read_sizes, [2])
+        self.assertFalse(truncated._drain_rejected_post_body("POST"))
+        self.assertEqual(truncated_stream.read_sizes, [2])
+
+    def test_rejected_post_body_drain_rejects_unsafe_lengths_and_encodings(self) -> None:
+        cases = (
+            ("GET", {"Content-Length": "2"}, b"{}"),
+            ("PUT", {"Content-Length": "2"}, b"{}"),
+            ("POST", {}, b""),
+            ("POST", {"Content-Length": "invalid"}, b""),
+            ("POST", {"Content-Length": "+2"}, b"{}"),
+            ("POST", {"Content-Length": " 2"}, b"{}"),
+            ("POST", {"Content-Length": "-1"}, b""),
+            (
+                "POST",
+                {"Content-Length": "2", "Transfer-Encoding": "chunked"},
+                b"{}",
+            ),
+        )
+        for method, headers, body in cases:
+            with self.subTest(method=method, header_names=tuple(headers)):
+                handler, stream = _drain_handler(body, headers)
+                self.assertFalse(handler._drain_rejected_post_body(method))
+                self.assertFalse(handler._request_body_read_started)
+                self.assertFalse(handler._request_body_consumed)
+                self.assertEqual(stream.read_sizes, [])
+
+        oversized, oversized_stream = _drain_handler(
+            b"x" * DEFAULT_MAX_REQUEST_BYTES,
+            {"Content-Length": str(DEFAULT_MAX_REQUEST_BYTES + 1)},
+        )
+        self.assertFalse(oversized._drain_rejected_post_body("POST"))
+        self.assertTrue(oversized._request_body_read_started)
+        self.assertFalse(oversized._request_body_consumed)
+        self.assertEqual(oversized_stream.read_sizes, [DEFAULT_MAX_REQUEST_BYTES])
+        self.assertFalse(oversized._drain_rejected_post_body("POST"))
+        self.assertEqual(oversized_stream.read_sizes, [DEFAULT_MAX_REQUEST_BYTES])
+
+        empty, empty_stream = _drain_handler(b"", {"Content-Length": "0"})
+        self.assertTrue(empty._drain_rejected_post_body("POST"))
+        self.assertTrue(empty._request_body_read_started)
+        self.assertTrue(empty._request_body_consumed)
+        self.assertEqual(empty_stream.read_sizes, [])
+
+        consumed, consumed_stream = _drain_handler(b"{}", {"Content-Length": "2"})
+        consumed._request_body_read_started = True
+        consumed._request_body_consumed = True
+        self.assertTrue(consumed._drain_rejected_post_body("POST"))
+        self.assertEqual(consumed_stream.read_sizes, [])
+
+        duplicate, duplicate_stream = _drain_handler(
+            b"{}",
+            {"Content-Length": "2"},
+        )
+        duplicate.headers["Content-Length"] = "2"
+        self.assertFalse(duplicate._drain_rejected_post_body("POST"))
+        self.assertEqual(duplicate_stream.read_sizes, [])
 
     def test_browser_sessions_have_independent_history(self) -> None:
         cookie_one = self._new_cookie()
@@ -398,7 +511,6 @@ class PharmacyWebTests(unittest.TestCase):
     def test_content_type_utf8_and_json_shape_are_validated(self) -> None:
         cookie = self._new_cookie()
         cases = [
-            ({"Content-Type": "text/plain"}, b"{}", 415),
             ({"Content-Type": "application/json; charset=latin-1"}, b"{}", 415),
             ({"Content-Type": "application/json"}, b"\xff", 400),
             ({"Content-Type": "application/json"}, b"[]", 400),
@@ -415,6 +527,17 @@ class PharmacyWebTests(unittest.TestCase):
                     headers=headers,
                 )[0]
                 self.assertEqual(status, expected)
+
+    def test_content_type_check_rejects_post_with_body(self) -> None:
+        cookie = self._new_cookie()
+        status = self._request(
+            "POST",
+            "/api/chat",
+            raw_body=b"{}",
+            cookie=cookie,
+            headers={"Content-Type": "text/plain"},
+        )[0]
+        self.assertEqual(status, 415)
 
     def test_request_message_and_response_limits_are_enforced(self) -> None:
         cookie = self._new_cookie()
@@ -801,6 +924,46 @@ def _gemini_text_response(text):
             }
         ).encode("utf-8"),
     )
+
+
+class _ReadTrackingStream:
+    def __init__(self, body: bytes) -> None:
+        self._stream = BytesIO(body)
+        self.read_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        return self._stream.read(size)
+
+
+def _drain_handler(body: bytes, headers: dict[str, str]):
+    handler = object.__new__(PharmacyWebRequestHandler)
+    handler.server = SimpleNamespace(
+        application=SimpleNamespace(max_request_bytes=DEFAULT_MAX_REQUEST_BYTES)
+    )
+    handler.headers = Message()
+    for name, value in headers.items():
+        handler.headers[name] = value
+    stream = _ReadTrackingStream(body)
+    handler.rfile = stream
+    handler._request_body_read_started = False
+    handler._request_body_consumed = False
+    return handler, stream
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            channel / 12.92
+            if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
   --green: #146c5a;
   --green-dark: #0c5043;
   --green-light: #d8eee6;
+  --focus-ring: #3f8b74;
   --amber: #8a570c;
   --amber-light: #fff2d9;
   --red: #a43d3d;
@@ -36,7 +37,7 @@ textarea { font: inherit; }
 button:focus-visible,
 textarea:focus-visible,
 .skip-link:focus {
-  outline: 3px solid #5aa98f;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 

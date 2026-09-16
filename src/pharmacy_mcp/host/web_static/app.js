@@ -274,6 +274,7 @@ async function initialize() {
     const status = await requestJson("/api/status");
     renderStatus(status);
     setConnection(true);
+    elements.messageInput.focus();
   } catch (error) {
     setConnection(
       false,
@@ -301,14 +302,3 @@ elements.dialog.addEventListener("cancel", (event) => {
 });
 
 initialize();
-
-(async function initialize() {
-  try {
-    const status = await requestJson("/api/status");
-    renderStatus(status);
-    setConnection(true);
-    elements.messageInput.focus();
-  } catch (error) {
-    setConnection(false, error instanceof Error ? error.message : "No se pudo iniciar la interfaz local.");
-  }
-})();

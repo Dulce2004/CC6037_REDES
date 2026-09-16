@@ -668,6 +668,8 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         del format, args
 
     def _dispatch(self, method: str) -> None:
+        self._request_body_read_started = False
+        self._request_body_consumed = False
         try:
             self._validate_host()
             path = self._request_path()
@@ -699,6 +701,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
                 )
             raise WebHTTPError(HTTPStatus.NOT_FOUND, "Ruta no encontrada.")
         except WebHTTPError as exc:
+            self._drain_rejected_post_body(method)
             self.close_connection = True
             self._send_json(
                 exc.status,
@@ -896,6 +899,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 "La solicitud excede el límite permitido.",
             )
+        self._request_body_read_started = True
         try:
             body = self.rfile.read(length)
         except TimeoutError as exc:
@@ -903,6 +907,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.REQUEST_TIMEOUT,
                 "El cuerpo de la solicitud no llegó a tiempo.",
             ) from exc
+        self._request_body_consumed = len(body) == length
         if len(body) != length:
             raise WebHTTPError(HTTPStatus.BAD_REQUEST, "El cuerpo está incompleto.")
         try:
@@ -920,6 +925,35 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise WebHTTPError(HTTPStatus.BAD_REQUEST, "El cuerpo JSON debe ser un objeto.")
         return value
+
+    def _drain_rejected_post_body(self, method: str) -> bool:
+        """Discard one bounded POST body when rejection happened before its read."""
+
+        if method != "POST" or self._request_body_read_started:
+            return self._request_body_consumed
+        if self.headers.get_all("Transfer-Encoding", []):
+            return False
+        length_values = self.headers.get_all("Content-Length", [])
+        if len(length_values) != 1:
+            return False
+        raw_length = length_values[0]
+        if not raw_length.isascii() or not raw_length.isdecimal():
+            return False
+        length = int(raw_length, 10)
+        drain_length = min(
+            length,
+            self.web_server.application.max_request_bytes,
+        )
+        self._request_body_read_started = True
+        if drain_length == 0:
+            self._request_body_consumed = True
+            return True
+        try:
+            drained = self.rfile.read(drain_length)
+        except (OSError, TimeoutError):
+            return False
+        self._request_body_consumed = len(drained) == length
+        return self._request_body_consumed
 
     def _reject_unknown_keys(
         self,
@@ -981,6 +1015,8 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         self.send_response(int(status))
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy", _content_security_policy())
         self.send_header("X-Content-Type-Options", "nosniff")
