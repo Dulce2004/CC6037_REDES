@@ -1,4 +1,9 @@
-"""Adaptadores MCP de consultas de catálogo, interacciones e inventario."""
+"""Adaptadores MCP de consultas de catálogo, interacciones e inventario.
+
+Los handlers validan exactamente los argumentos publicados, convierten errores de
+dominio en resultados de tool y producen texto más ``structuredContent`` coherentes.
+Las cuatro tools son de solo lectura y comparten repositorios ya validados. El módulo
+no registra tools ni realiza E/S por sí solo."""
 
 from __future__ import annotations
 
@@ -122,6 +127,7 @@ class PharmacyQueryHandlers:
     interactions: InteractionRepository
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed pharmacy query handlers invariants."""
         if not isinstance(self.catalog, PharmacyCatalog):
             raise TypeError("'catalog' must be a PharmacyCatalog instance.")
         if not isinstance(self.inventory, SQLitePharmacyStore):
@@ -132,6 +138,7 @@ class PharmacyQueryHandlers:
             )
 
     def search_medications(self, arguments: ToolArguments) -> JsonValue:
+        """Return medications while preserving stable ordering and ownership."""
         _reject_unexpected_arguments(arguments, {"query", "otc_only"})
         query = _required_string(arguments, "query")
         otc_only = arguments.get("otc_only", False)
@@ -165,6 +172,7 @@ class PharmacyQueryHandlers:
         )
 
     def get_medication_details(self, arguments: ToolArguments) -> JsonValue:
+        """Return medication details while preserving stable ordering and ownership."""
         _reject_unexpected_arguments(arguments, {"sku"})
         sku = _required_identifier(arguments, "sku").upper()
         medication = self.catalog.get_medication(sku)
@@ -184,6 +192,7 @@ class PharmacyQueryHandlers:
         return _tool_result(text, {"medication": details})
 
     def check_interactions(self, arguments: ToolArguments) -> JsonValue:
+        """Report controlled medication/allergy findings without declaring clinical safety."""
         _reject_unexpected_arguments(
             arguments,
             {"medication_sku", "current_medications", "allergies"},
@@ -268,6 +277,7 @@ class PharmacyQueryHandlers:
         )
 
     def check_stock(self, arguments: ToolArguments) -> JsonValue:
+        """Return current stock for one branch or every catalog branch."""
         _reject_unexpected_arguments(arguments, {"sku", "branch_id"})
         sku = _required_identifier(arguments, "sku").upper()
 
@@ -310,6 +320,7 @@ class PharmacyQueryHandlers:
         )
 
     def _stock_item(self, branch_id: str, quantity: int) -> dict[str, JsonValue]:
+        """Combine an inventory record with its public branch and medication labels."""
         branch = self.catalog.get_branch(branch_id)
         if branch is None:
             raise RuntimeError("Inventory references an unknown branch.")
@@ -322,6 +333,7 @@ class PharmacyQueryHandlers:
 
 
 def _required_string(arguments: ToolArguments, name: str) -> str:
+    """Validate string and raise a controlled error on violation."""
     value = arguments.get(name)
     if not isinstance(value, str) or not value.strip():
         raise InvalidParamsError(f"'{name}' must be a non-empty string.")
@@ -329,6 +341,7 @@ def _required_string(arguments: ToolArguments, name: str) -> str:
 
 
 def _required_identifier(arguments: ToolArguments, name: str) -> str:
+    """Validate identifier and raise a controlled error on violation."""
     value = _required_string(arguments, name)
     if _IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise InvalidParamsError(
@@ -341,6 +354,7 @@ def _optional_identifier_array(
     arguments: ToolArguments,
     name: str,
 ) -> list[str]:
+    """Validate an optional unique array of bounded catalog identifiers."""
     value = arguments.get(name, [])
     if not isinstance(value, list):
         raise InvalidParamsError(f"'{name}' must be an array.")
@@ -358,6 +372,7 @@ def _optional_string_array(
     arguments: ToolArguments,
     name: str,
 ) -> list[str]:
+    """Validate an optional array of bounded nonempty strings."""
     value = arguments.get(name, [])
     if not isinstance(value, list):
         raise InvalidParamsError(f"'{name}' must be an array.")
@@ -387,6 +402,7 @@ def _optional_string_array(
 
 
 def _validate_identifier_value(value: JsonValue, name: str) -> str:
+    """Validate identifier value and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip():
         raise InvalidParamsError(
             f"Every item in '{name}' must be a non-empty string."
@@ -403,6 +419,7 @@ def _validate_identifier_value(value: JsonValue, name: str) -> str:
 def _highest_interaction_severity(
     alerts: list[dict[str, JsonValue]],
 ) -> str:
+    """Select the highest controlled severity present in interaction findings."""
     severities = {alert.get("severity") for alert in alerts}
     if "high" in severities:
         return "high"
@@ -415,6 +432,7 @@ def _reject_unexpected_arguments(
     arguments: ToolArguments,
     allowed: set[str],
 ) -> None:
+    """Validate unexpected arguments and raise a controlled error on violation."""
     unexpected = sorted(set(arguments) - allowed)
     if unexpected:
         raise InvalidParamsError(
@@ -423,6 +441,7 @@ def _reject_unexpected_arguments(
 
 
 def _medication_summary(medication: Medication) -> dict[str, JsonValue]:
+    """Serialize the public fields needed in medication search results."""
     return {
         "sku": medication.sku,
         "name": medication.name,
@@ -434,6 +453,7 @@ def _medication_summary(medication: Medication) -> dict[str, JsonValue]:
 
 
 def _medication_details(medication: Medication) -> dict[str, JsonValue]:
+    """Serialize all public catalog fields for one medication detail result."""
     return {
         "sku": medication.sku,
         "name": medication.name,
@@ -448,6 +468,7 @@ def _medication_details(medication: Medication) -> dict[str, JsonValue]:
 
 
 def _tool_result(text: str, structured_content: JsonValue) -> dict[str, JsonValue]:
+    """Wrap pharmacy query data in the MCP text-content result shape."""
     return {
         "content": [{"type": "text", "text": text}],
         "structuredContent": structured_content,
@@ -455,6 +476,7 @@ def _tool_result(text: str, structured_content: JsonValue) -> dict[str, JsonValu
 
 
 def _tool_error(text: str) -> dict[str, JsonValue]:
+    """Return a domain lookup failure as an MCP result marked ``isError``."""
     return {
         "content": [{"type": "text", "text": text}],
         "isError": True,

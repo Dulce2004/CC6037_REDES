@@ -1,4 +1,8 @@
-"""Capa manual de mensajes JSON-RPC 2.0."""
+"""Capa manual de mensajes JSON-RPC 2.0.
+
+Reexporta tipos, errores y funciones de conversión usados por clientes y servidores.
+La capa conserva IDs, distingue notificaciones de solicitudes con ``null`` y limita
+sus valores a datos JSON válidos. Importarla no realiza serialización ni E/S."""
 
 from .errors import (
     INTERNAL_ERROR,

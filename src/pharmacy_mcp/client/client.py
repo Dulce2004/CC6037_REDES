@@ -1,4 +1,9 @@
-"""Cliente MCP local que se comunica en memoria con el servidor educativo."""
+"""Cliente MCP local que se comunica en memoria con el servidor educativo.
+
+Construye mensajes JSON-RPC con IDs monotónicos, completa el lifecycle MCP y valida
+que cada respuesta corresponda con su solicitud. Las notificaciones no consumen IDs
+ni esperan respuesta. El cliente no posee transporte, red o persistencia; cualquier
+efecto de dominio pertenece al servidor inyectado."""
 
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ class ClientError:
     code: int | None = None
 
     def __str__(self) -> str:
+        """Return a safe human-readable representation of this controlled error."""
         if self.code is None:
             return f"Error: {self.message}"
         return f"Error {self.code}: {self.message}"
@@ -42,6 +48,7 @@ class PharmacyMCPClient:
     """Administra estado e intercambios JSON-RPC con un servidor MCP local."""
 
     def __init__(self, server: PharmacyMCPServer) -> None:
+        """Bind one in-process server and initialize deterministic request correlation."""
         self._server = server
         self._next_request_id = 1
         self.is_initialized = False
@@ -147,6 +154,7 @@ class PharmacyMCPClient:
         method: str,
         params: dict[str, JsonValue],
     ) -> ClientExchange:
+        """Send one correlated request to the in-process server and validate its response."""
         request_id = self._next_request_id
         self._next_request_id += 1
 
@@ -174,6 +182,7 @@ class PharmacyMCPClient:
         method: str,
         params: dict[str, JsonValue],
     ) -> ClientError | None:
+        """Send one ID-less notification and reject any unexpected response."""
         try:
             notification = Request(method=method, params=params)
         except JsonRpcError as exc:
@@ -188,6 +197,7 @@ class PharmacyMCPClient:
         return None
 
     def _require_initialized(self) -> ClientError | None:
+        """Validate initialized and raise a controlled error on violation."""
         if self.is_initialized:
             return None
         return ClientError("Client has not been initialized.")

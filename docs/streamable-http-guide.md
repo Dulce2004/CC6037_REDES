@@ -215,8 +215,8 @@ and current-medication inputs are redacted, and all payloads remain bounded.
 
 ## Persistence and deployment limitations
 
-This is a local academic transport, not a production architecture. A future
-Cloud Run container filesystem will be ephemeral. SQLite therefore cannot offer
+This is an academic transport, not a production architecture. A Cloud Run
+container filesystem is ephemeral. SQLite therefore cannot offer
 durable persistence across restarts and cannot coordinate inventory across
 multiple service instances. A classroom Cloud Run demonstration must be limited
 to a maximum of one instance and may still lose its local database when that
@@ -227,11 +227,16 @@ database, stronger identity and authorization, TLS at the service boundary,
 central session/state design, observability, and operational controls. Those
 items are deliberately outside this increment.
 
-The repository now includes container artifacts for local validation and a
-documented future single-instance Cloud Run demonstration. No cloud deployment
-has been performed. See the
+The repository includes container artifacts and a documented single-instance
+Cloud Run demonstration profile. Repository contents do not prove whether an
+external deployment currently exists; verify that separately with authorized
+cloud access. See the
 [container and Cloud Run preparation guide](container-cloud-run-guide.md).
-Wireshark capture and analysis and a web interface remain future work.
+The loopback web interface is documented in the
+[chatbot guide](chatbot-guide.md). Local HTTP and remote HTTPS Wireshark capture
+files and selected screenshots are retained as academic evidence; remote
+JSON-RPC payloads remain unreadable in an ordinary capture because TLS protects
+the application data.
 
 ## Reference
 

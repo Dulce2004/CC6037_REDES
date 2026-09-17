@@ -1,4 +1,9 @@
-"""Provider-neutral in-memory conversation history with safe turn trimming."""
+"""Provider-neutral in-memory conversation history with safe turn trimming.
+
+History is stored as complete user/assistant/tool exchanges so trimming never splits
+a tool request from its correlated result. One active turn may be built at a time and
+must be finished or discarded explicitly. Copies are returned to callers, size/count
+limits are enforced, and no conversation is persisted by this module."""
 
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ class ConversationHistory:
         max_messages: int = DEFAULT_HISTORY_MAX_MESSAGES,
         max_user_input_chars: int = DEFAULT_MAX_USER_INPUT_CHARS,
     ) -> None:
+        """Create an empty turn-aware history with message and input bounds."""
         _validate_limit(max_messages, "max_messages", 3, 10_000)
         _validate_limit(
             max_user_input_chars,
@@ -37,6 +43,7 @@ class ConversationHistory:
 
     @property
     def messages(self) -> list[dict[str, JsonValue]]:
+        """Return a defensive, flattened copy of completed and active messages."""
         flattened = [
             message
             for turn in self._completed_turns
@@ -48,10 +55,12 @@ class ConversationHistory:
 
     @property
     def has_active_turn(self) -> bool:
+        """Return whether a user turn is currently being assembled."""
         return self._current_turn is not None
 
     @property
     def active_turn_has_tool_results(self) -> bool:
+        """Return whether the active turn ends in a nonempty tool-result message."""
         if self._current_turn is None or len(self._current_turn) < 3:
             return False
         last = self._current_turn[-1]
@@ -67,6 +76,7 @@ class ConversationHistory:
         )
 
     def begin_turn(self, text: str) -> None:
+        """Start one validated user turn and trim only older complete turns if needed."""
         if self._current_turn is not None:
             raise ConversationError("A conversation turn is already active.")
         if not isinstance(text, str) or not text.strip():
@@ -108,6 +118,7 @@ class ConversationHistory:
             )
 
     def append_assistant(self, content: list[dict[str, JsonValue]]) -> None:
+        """Append validated assistant content without exceeding the history limit."""
         self._require_current()
         _validate_assistant_content(content)
         self.reserve(1)
@@ -117,6 +128,7 @@ class ConversationHistory:
         )
 
     def append_tool_results(self, blocks: list[dict[str, JsonValue]]) -> None:
+        """Append results that exactly answer the preceding assistant tool requests."""
         current = self._require_current()
         if not current or current[-1].get("role") != "assistant":
             raise ConversationError(
@@ -133,6 +145,7 @@ class ConversationHistory:
         current.append({"role": "user", "content": deepcopy(blocks)})
 
     def finish_turn(self) -> None:
+        """Commit an assistant-terminated turn with no unresolved tool requests."""
         current = self._require_current()
         if len(current) < 2 or current[-1].get("role") != "assistant":
             raise ConversationError(
@@ -150,19 +163,23 @@ class ConversationHistory:
         self._current_turn = None
 
     def discard_active_turn(self) -> None:
+        """Discard only the incomplete turn, preserving all completed history."""
         self._current_turn = None
 
     def clear(self) -> None:
+        """Erase completed history and any active turn from memory."""
         self._completed_turns.clear()
         self._current_turn = None
 
     def _require_current(self) -> list[dict[str, JsonValue]]:
+        """Validate current and raise a controlled error on violation."""
         if self._current_turn is None:
             raise ConversationError("No conversation turn is active.")
         return self._current_turn
 
 
 def _validate_assistant_content(content: object) -> None:
+    """Validate assistant content and raise a controlled error on violation."""
     if not isinstance(content, list):
         raise ConversationError("Assistant content must be an array.")
     for block in content:
@@ -187,6 +204,7 @@ def _validate_assistant_content(content: object) -> None:
 
 
 def _validate_tool_results(blocks: object, expected_ids: list[object]) -> None:
+    """Validate tool results and raise a controlled error on violation."""
     if not expected_ids:
         raise ConversationError("The assistant response did not request tools.")
     if not isinstance(blocks, list) or len(blocks) != len(expected_ids):
@@ -212,6 +230,7 @@ def _validate_tool_results(blocks: object, expected_ids: list[object]) -> None:
 
 
 def _validate_limit(value: object, name: str, minimum: int, maximum: int) -> None:
+    """Validate limit and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -224,6 +243,7 @@ def _validate_limit(value: object, name: str, minimum: int, maximum: int) -> Non
 
 
 def _valid_provider_metadata(value: object) -> bool:
+    """Validate opaque provider metadata as recursively JSON-safe content."""
     if not isinstance(value, dict) or set(value) != {"gemini"}:
         return False
     gemini = value.get("gemini")

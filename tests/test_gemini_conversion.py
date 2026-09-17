@@ -27,7 +27,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class GeminiToolConversionTests(unittest.TestCase):
+    """Group regression checks for gemini tool conversion behavior and boundaries."""
     def test_function_declarations_preserve_order_schema_and_namespace(self) -> None:
+        """Regression check: function declarations preserve order schema and namespace."""
         tools = [
             _tool("pharmacy__check_stock"),
             _tool("git__git_status"),
@@ -48,6 +50,7 @@ class GeminiToolConversionTests(unittest.TestCase):
         self.assertEqual([tool.input_schema for tool in tools], originals)
 
     def test_empty_tools_are_omitted_and_invalid_tools_fail_clearly(self) -> None:
+        """Regression check: empty tools are omitted and invalid tools fail clearly."""
         self.assertEqual(tools_for_gemini([]), [])
         with self.assertRaisesRegex(GeminiConfigurationError, "Duplicate"):
             tools_for_gemini([_tool("server__one"), _tool("server__one")])
@@ -57,6 +60,7 @@ class GeminiToolConversionTests(unittest.TestCase):
             tools_for_gemini([_tool("server__bad", schema={"type": "array"})])
 
     def test_mcp_only_fields_are_not_sent_to_gemini(self) -> None:
+        """Regression check: mcp only fields are not sent to gemini."""
         converted = tools_for_gemini(
             [
                 _tool(
@@ -73,7 +77,9 @@ class GeminiToolConversionTests(unittest.TestCase):
 
 
 class GeminiHistoryConversionTests(unittest.TestCase):
+    """Group regression checks for gemini history conversion behavior and boundaries."""
     def test_roles_text_tool_calls_and_results_are_converted_in_order(self) -> None:
+        """Regression check: roles text tool calls and results are converted in order."""
         messages = [
             {"role": "user", "content": "stock"},
             {
@@ -129,6 +135,7 @@ class GeminiHistoryConversionTests(unittest.TestCase):
         self.assertEqual(messages, original)
 
     def test_function_response_requires_an_earlier_correlated_request(self) -> None:
+        """Regression check: function response requires an earlier correlated request."""
         with self.assertRaisesRegex(GeminiAPIError, "no matching"):
             messages_for_gemini(
                 [
@@ -146,6 +153,7 @@ class GeminiHistoryConversionTests(unittest.TestCase):
             )
 
     def test_thought_signature_is_restored_on_the_same_function_call(self) -> None:
+        """Regression check: thought signature is restored on the same function call."""
         signature = "opaque-signature-value"
         converted = messages_for_gemini(
             [
@@ -181,6 +189,7 @@ class GeminiHistoryConversionTests(unittest.TestCase):
         self.assertEqual(call_part["functionCall"]["id"], "call-a")
 
     def test_private_gemini_metadata_is_never_sent_to_anthropic(self) -> None:
+        """Regression check: private gemini metadata is never sent to anthropic."""
         transport = _QueueTransport([_anthropic_response("ok")])
         client = AnthropicMessagesClient(
             AnthropicSettings(api_key="simulated", model="test-model"),
@@ -222,16 +231,20 @@ class GeminiHistoryConversionTests(unittest.TestCase):
 
 
 class GeminiResponseTests(unittest.TestCase):
+    """Group regression checks for gemini response behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.settings = GeminiSettings(api_key="simulated")
 
     def test_text_response_is_normalized(self) -> None:
+        """Regression check: text response is normalized."""
         message = self._message([{"text": "Hola"}])
         self.assertEqual(message.stop_reason, "end_turn")
         self.assertEqual(message.content, ({"type": "text", "text": "Hola"},))
         self.assertEqual(message.finish_reason, "STOP")
 
     def test_function_call_id_name_args_and_signature_are_preserved(self) -> None:
+        """Regression check: function call id name args and signature are preserved."""
         signature = "opaque"
         message = self._message(
             [
@@ -256,6 +269,7 @@ class GeminiResponseTests(unittest.TestCase):
         )
 
     def test_multiple_calls_preserve_order_and_generate_deterministic_ids(self) -> None:
+        """Regression check: multiple calls preserve order and generate deterministic ids."""
         client = GeminiGenerateContentClient(
             self.settings,
             transport=_QueueTransport(
@@ -281,6 +295,7 @@ class GeminiResponseTests(unittest.TestCase):
         self.assertEqual(second.content[0]["id"], "gemini-call-000003")
 
     def test_duplicate_ids_are_rejected(self) -> None:
+        """Regression check: duplicate ids are rejected."""
         with self.assertRaisesRegex(GeminiAPIError, "duplicate"):
             self._message(
                 [
@@ -290,6 +305,7 @@ class GeminiResponseTests(unittest.TestCase):
             )
 
     def test_thought_only_parts_are_not_exposed_as_text(self) -> None:
+        """Regression check: thought only parts are not exposed as text."""
         message = self._message(
             [{"thought": True, "text": "hidden reasoning"}, {"text": "visible"}]
         )
@@ -299,6 +315,7 @@ class GeminiResponseTests(unittest.TestCase):
             self._message([{"thought": True, "text": "hidden only"}])
 
     def test_missing_candidates_content_parts_and_blocks_are_safe_errors(self) -> None:
+        """Regression check: missing candidates content parts and blocks are safe errors."""
         bodies = [
             {},
             {"candidates": []},
@@ -330,6 +347,7 @@ class GeminiResponseTests(unittest.TestCase):
                 self.assertNotIn("private", str(context.exception))
 
     def test_malformed_calls_and_args_are_rejected(self) -> None:
+        """Regression check: malformed calls and args are rejected."""
         for part in (
             {"functionCall": "bad"},
             {"functionCall": {"name": "", "args": {}}},
@@ -341,6 +359,7 @@ class GeminiResponseTests(unittest.TestCase):
                     self._message([part])
 
     def _message(self, parts, *, finish_reason="STOP"):
+        """Support the controlled test scenario for message."""
         return self._raw_message(
             {
                 "responseId": "response-test",
@@ -354,6 +373,7 @@ class GeminiResponseTests(unittest.TestCase):
         )
 
     def _raw_message(self, body):
+        """Support the controlled test scenario for raw message."""
         client = GeminiGenerateContentClient(
             self.settings,
             transport=_QueueTransport(
@@ -364,16 +384,20 @@ class GeminiResponseTests(unittest.TestCase):
 
 
 class _QueueTransport:
+    """Provide a deterministic queue transport test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.responses = list(responses)
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         return self.responses.pop(0)
 
 
 def _tool(name, *, schema=None, annotations=None, extra_fields=None):
+    """Support the controlled test scenario for tool."""
     server, _, tool_name = name.partition("__")
     return RegisteredTool(
         namespaced_name=name,
@@ -387,6 +411,7 @@ def _tool(name, *, schema=None, annotations=None, extra_fields=None):
 
 
 def _gemini_response(parts):
+    """Support the controlled test scenario for gemini response."""
     return HTTPResponse(
         status=200,
         headers={},
@@ -404,6 +429,7 @@ def _gemini_response(parts):
 
 
 def _anthropic_response(text):
+    """Support the controlled test scenario for anthropic response."""
     return HTTPResponse(
         status=200,
         headers={},

@@ -1,4 +1,9 @@
-"""Carga y consulta de solo lectura para el catálogo simulado."""
+"""Carga y consulta de solo lectura para el catálogo simulado.
+
+El repositorio valida forma JSON, unicidad, precios exactos y referencias antes de
+crear índices inmutables de sucursales y medicamentos. Las consultas preservan el
+orden del archivo y normalizan texto sin mutar datos. Solo las funciones de carga leen
+los JSON empaquetados; no existe escritura de catálogo."""
 
 from __future__ import annotations
 
@@ -33,6 +38,7 @@ class PharmacyCatalog:
         branches: Iterable[Branch],
         medications: Iterable[Medication],
     ) -> None:
+        """Validate and index immutable branch and medication collections."""
         branch_list = tuple(branches)
         medication_list = tuple(medications)
 
@@ -86,15 +92,19 @@ class PharmacyCatalog:
             raise CatalogValidationError(f"Invalid catalog data: {exc}") from exc
 
     def get_branch(self, branch_id: str) -> Branch | None:
+        """Return branch while preserving stable ordering and ownership."""
         return self._branches.get(branch_id)
 
     def list_branches(self) -> tuple[Branch, ...]:
+        """Return branches while preserving stable ordering and ownership."""
         return tuple(self._branches.values())
 
     def get_medication(self, sku: str) -> Medication | None:
+        """Return medication while preserving stable ordering and ownership."""
         return self._medications.get(sku)
 
     def list_medications(self) -> tuple[Medication, ...]:
+        """Return medications while preserving stable ordering and ownership."""
         return tuple(self._medications.values())
 
     def search_medications(
@@ -143,6 +153,7 @@ def load_default_catalog() -> PharmacyCatalog:
 
 
 def _read_json_array(path: Path) -> list[object]:
+    """Read json array under the module's validation and size limits."""
     try:
         raw_data = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -166,11 +177,13 @@ def _read_json_array(path: Path) -> list[object]:
 
 
 def _parse_branch(value: object) -> Branch:
+    """Parse branch into the module's validated representation."""
     item = _object_with_exact_keys(value, {"branch_id", "name"}, "branch")
     return Branch(branch_id=item["branch_id"], name=item["name"])
 
 
 def _parse_medication(value: object) -> Medication:
+    """Parse medication into the module's validated representation."""
     expected_keys = {
         "sku",
         "name",
@@ -210,6 +223,7 @@ def _object_with_exact_keys(
     expected_keys: set[str],
     label: str,
 ) -> dict[str, object]:
+    """Require an object whose keys exactly match the controlled catalog schema."""
     if not isinstance(value, dict) or not all(
         isinstance(key, str) for key in value
     ):
@@ -231,6 +245,7 @@ def _object_with_exact_keys(
 
 
 def _string_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    """Convert a nonempty unique string array into an immutable tuple."""
     if not isinstance(value, list):
         raise CatalogValidationError(f"'{field_name}' must be a JSON array.")
     if not all(isinstance(item, str) for item in value):
@@ -244,6 +259,7 @@ def _index_unique(
     key: Callable[[_CatalogItem], str],
     label: str,
 ) -> dict[str, _CatalogItem]:
+    """Build a unique-key index and reject duplicate catalog identities."""
     indexed: dict[str, _CatalogItem] = {}
     for item in items:
         item_key = key(item)
@@ -254,6 +270,7 @@ def _index_unique(
 
 
 def _validate_unique_text(values: Iterable[str], *, label: str) -> None:
+    """Validate unique text and raise a controlled error on violation."""
     seen: set[str] = set()
     for value in values:
         normalized = value.casefold()
@@ -263,6 +280,7 @@ def _validate_unique_text(values: Iterable[str], *, label: str) -> None:
 
 
 def _normalize_search_text(value: str) -> str:
+    """Transform search text into its safe canonical form."""
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_accents = "".join(
         character

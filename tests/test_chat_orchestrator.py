@@ -29,7 +29,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class ToolConversionTests(unittest.TestCase):
+    """Group regression checks for tool conversion behavior and boundaries."""
     def test_dynamic_conversion_uses_only_anthropic_fields_and_copies_schema(self) -> None:
+        """Regression check: dynamic conversion uses only anthropic fields and copies schema."""
         tool = _tool(
             "filesystem__read_text_file",
             annotations={"readOnlyHint": True},
@@ -48,6 +50,7 @@ class ToolConversionTests(unittest.TestCase):
         self.assertEqual(tool.to_dict(), original)
 
     def test_registry_order_is_preserved_for_all_server_types(self) -> None:
+        """Regression check: registry order is preserved for all server types."""
         tools = [
             _tool("pharmacy__check_stock"),
             _tool("git__git_status"),
@@ -59,6 +62,7 @@ class ToolConversionTests(unittest.TestCase):
         )
 
     def test_duplicates_invalid_names_and_non_object_schemas_are_rejected(self) -> None:
+        """Regression check: duplicates invalid names and non object schemas are rejected."""
         with self.assertRaisesRegex(ToolConversionError, "Duplicate"):
             tools_for_anthropic([_tool("server__one"), _tool("server__one")])
         with self.assertRaisesRegex(ToolConversionError, "incompatible"):
@@ -68,6 +72,7 @@ class ToolConversionTests(unittest.TestCase):
             tools_for_anthropic([invalid])
 
     def test_mcp_results_preserve_errors_bound_size_and_omit_media(self) -> None:
+        """Regression check: mcp results preserve errors bound size and omit media."""
         structured, is_error = mcp_result_for_anthropic(
             {"structuredContent": {"stock": 25}, "isError": True}
         )
@@ -95,7 +100,9 @@ class ToolConversionTests(unittest.TestCase):
 
 
 class ChatOrchestratorTests(unittest.TestCase):
+    """Group regression checks for chat orchestrator behavior and boundaries."""
     def test_general_questions_keep_complete_context_between_requests(self) -> None:
+        """Regression check: general questions keep complete context between requests."""
         client = _FakeClient(
             [
                 _message(text="Alan Turing fue un matemático británico."),
@@ -116,6 +123,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("datos académicos simulados", client.requests[0]["system"])
 
     def test_one_tool_use_executes_and_returns_correlated_result(self) -> None:
+        """Regression check: one tool use executes and returns correlated result."""
         tool = _tool("pharmacy__check_stock")
         manager = _FakeManager([tool])
         client = _FakeClient(
@@ -149,6 +157,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertEqual(assistant["content"][0]["type"], "text")
 
     def test_multiple_tools_are_sequential_and_share_one_result_message(self) -> None:
+        """Regression check: multiple tools are sequential and share one result message."""
         tools = [
             _tool("pharmacy__check_stock"),
             _tool("filesystem__read_text_file"),
@@ -180,6 +189,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         )
 
     def test_tool_errors_do_not_omit_other_results(self) -> None:
+        """Regression check: tool errors do not omit other results."""
         tools = [_tool("server__ok"), _tool("server__rpc"), _tool("server__boom")]
         manager = _FakeManager(tools)
         manager.outcomes["server__rpc"] = MCPServerResponseError(
@@ -212,6 +222,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertIn("not registered", blocks[3]["content"])
 
     def test_mcp_is_error_is_preserved(self) -> None:
+        """Regression check: mcp is error is preserved."""
         tool = _tool("pharmacy__check_stock")
         manager = _FakeManager([tool])
         manager.outcomes[tool.namespaced_name] = {
@@ -233,6 +244,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertEqual(result["content"], "Unknown SKU")
 
     def test_each_mutation_requires_confirmation_and_rejection_is_not_sent(self) -> None:
+        """Regression check: each mutation requires confirmation and rejection is not sent."""
         for answer, accepted in (("sí", True), ("yes", True), ("", False), ("no", False)):
             with self.subTest(answer=answer):
                 tool = _tool("pharmacy__create_order")
@@ -274,6 +286,7 @@ class ChatOrchestratorTests(unittest.TestCase):
                 self.assertEqual(result.get("is_error") is True, not accepted)
 
     def test_read_only_call_never_prompts(self) -> None:
+        """Regression check: read only call never prompts."""
         tool = _tool("git__git_status")
         manager = _FakeManager([tool])
         client = _FakeClient(
@@ -290,6 +303,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertFalse(manager.calls[0][2])
 
     def test_round_limit_pairs_unexecuted_tools_and_makes_no_further_call(self) -> None:
+        """Regression check: round limit pairs unexecuted tools and makes no further call."""
         tool = _tool("server__tool")
         manager = _FakeManager([tool])
         client = _FakeClient(
@@ -308,6 +322,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(manager.calls), 1)
 
     def test_too_many_tools_executes_none(self) -> None:
+        """Regression check: too many tools executes none."""
         tool = _tool("server__tool")
         manager = _FakeManager([tool])
         client = _FakeClient(
@@ -328,6 +343,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(client.requests), 1)
 
     def test_invalid_stop_reason_discards_active_turn(self) -> None:
+        """Regression check: invalid stop reason discards active turn."""
         history = ConversationHistory()
         orchestrator = ChatOrchestrator(
             _FakeManager([]),
@@ -339,6 +355,7 @@ class ChatOrchestratorTests(unittest.TestCase):
         self.assertEqual(history.messages, [])
 
     def test_api_failure_after_tool_keeps_completed_tool_exchange(self) -> None:
+        """Regression check: api failure after tool keeps completed tool exchange."""
         tool = _tool("pharmacy__check_stock")
         history = ConversationHistory()
         client = _FakeClient(
@@ -362,27 +379,34 @@ class ChatOrchestratorTests(unittest.TestCase):
 
 
 class _FakeClient:
+    """Provide a deterministic fake client test double for isolated scenarios."""
     def __init__(self, responses: list[AnthropicMessage]) -> None:
+        """Support the controlled test scenario for init."""
         self.settings = AnthropicSettings(api_key="present", model="test-model")
         self.responses = list(responses)
         self.requests: list[dict[str, object]] = []
 
     @property
     def provider_name(self):
+        """Support the controlled test scenario for provider name."""
         return "anthropic"
 
     @property
     def model_name(self):
+        """Support the controlled test scenario for model name."""
         return self.settings.model
 
     @property
     def max_tool_rounds(self):
+        """Support the controlled test scenario for max tool rounds."""
         return self.settings.max_tool_rounds
 
     def prepare_tools(self, tools):
+        """Support the controlled test scenario for prepare tools."""
         return tools_for_anthropic(tools)
 
     def create_message(self, *, messages, tools=None, system=None):
+        """Build the deterministic create message fixture used by this test module."""
         self.requests.append(
             {
                 "messages": deepcopy(messages),
@@ -396,26 +420,32 @@ class _FakeClient:
 
 
 class _FakeManager:
+    """Provide a deterministic fake manager test double for isolated scenarios."""
     def __init__(self, tools, *, mutable=frozenset()) -> None:
+        """Support the controlled test scenario for init."""
         self.tools = tuple(tools)
         self.mutable = set(mutable)
         self.calls = []
         self.outcomes = {}
 
     def list_tools(self):
+        """Support the controlled test scenario for list tools."""
         return self.tools
 
     def resolve_tool(self, name):
+        """Support the controlled test scenario for resolve tool."""
         for tool in self.tools:
             if tool.namespaced_name == name:
                 return tool
         raise MCPHostError(f"Namespaced tool '{name}' is not registered.")
 
     def requires_confirmation(self, name):
+        """Support the controlled test scenario for requires confirmation."""
         self.resolve_tool(name)
         return name in self.mutable
 
     def invoke_tool(self, name, arguments, *, allow_mutation=False):
+        """Support the controlled test scenario for invoke tool."""
         self.calls.append((name, deepcopy(arguments), allow_mutation))
         outcome = self.outcomes.get(
             name,
@@ -433,6 +463,7 @@ def _tool(
     annotations=None,
     extra_fields=None,
 ) -> RegisteredTool:
+    """Support the controlled test scenario for tool."""
     server, _, original = name.partition("__")
     return RegisteredTool(
         namespaced_name=name,
@@ -446,6 +477,7 @@ def _tool(
 
 
 def _message(*, text=None, content=None, stop_reason="end_turn") -> AnthropicMessage:
+    """Support the controlled test scenario for message."""
     blocks = content if content is not None else [{"type": "text", "text": text}]
     return AnthropicMessage(
         message_id="msg-test",
@@ -456,6 +488,7 @@ def _message(*, text=None, content=None, stop_reason="end_turn") -> AnthropicMes
 
 
 def _use(identifier: str, name: str, arguments=None):
+    """Support the controlled test scenario for use."""
     return {
         "type": "tool_use",
         "id": identifier,

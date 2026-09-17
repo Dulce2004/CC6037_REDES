@@ -29,10 +29,12 @@ from pharmacy_mcp.server.stdio import serve_stdio  # noqa: E402
 
 
 def json_line(message: dict[str, object]) -> str:
+    """Support the controlled test scenario for json line."""
     return f"{json.dumps(message, ensure_ascii=False)}\n"
 
 
 def initialize_request(request_id: object = 1) -> dict[str, object]:
+    """Support the controlled test scenario for initialize request."""
     return {
         "jsonrpc": "2.0",
         "method": "initialize",
@@ -46,29 +48,37 @@ def initialize_request(request_id: object = 1) -> dict[str, object]:
 
 
 class TrackingOutput(io.StringIO):
+    """Group regression checks for tracking output behavior and boundaries."""
     def __init__(self) -> None:
+        """Support the controlled test scenario for init."""
         super().__init__()
         self.flush_count = 0
 
     def flush(self) -> None:
+        """Support the controlled test scenario for flush."""
         self.flush_count += 1
         super().flush()
 
 
 class FailingInput:
+    """Group regression checks for failing input behavior and boundaries."""
     def __iter__(self) -> "FailingInput":
+        """Support the controlled test scenario for iter."""
         return self
 
     def __next__(self) -> str:
+        """Support the controlled test scenario for next."""
         raise OSError("simulated read failure")
 
 
 class StdioTransportTests(unittest.TestCase):
+    """Group regression checks for stdio transport behavior and boundaries."""
     def run_transport(
         self,
         payload: str,
         server: PharmacyMCPServer | None = None,
     ) -> tuple[int, list[dict[str, object]], str, PharmacyMCPServer]:
+        """Support the controlled test scenario for run transport."""
         active_server = server if server is not None else PharmacyMCPServer()
         stdout = TrackingOutput()
         stderr = io.StringIO()
@@ -83,6 +93,7 @@ class StdioTransportTests(unittest.TestCase):
         return exit_code, messages, stderr.getvalue(), active_server
 
     def test_eof_closes_cleanly_without_output(self) -> None:
+        """Regression check: eof closes cleanly without output."""
         exit_code, messages, diagnostics, server = self.run_transport("")
 
         self.assertEqual(exit_code, 0)
@@ -91,6 +102,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(server.state, ServerState.UNINITIALIZED)
 
     def test_initialize_is_processed_as_one_line(self) -> None:
+        """Regression check: initialize is processed as one line."""
         exit_code, messages, diagnostics, server = self.run_transport(
             json_line(initialize_request())
         )
@@ -105,6 +117,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(server.state, ServerState.INITIALIZING)
 
     def test_server_state_is_preserved_across_input_lines(self) -> None:
+        """Regression check: server state is preserved across input lines."""
         payload = "".join(
             (
                 json_line(initialize_request()),
@@ -135,6 +148,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(server.state, ServerState.READY)
 
     def test_notifications_do_not_write_responses(self) -> None:
+        """Regression check: notifications do not write responses."""
         payload = json_line(
             {"jsonrpc": "2.0", "method": "unknown/notification", "params": {}}
         )
@@ -146,6 +160,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(diagnostics, "")
 
     def test_invalid_json_writes_parse_error_to_stdout(self) -> None:
+        """Regression check: invalid json writes parse error to stdout."""
         exit_code, messages, diagnostics, _ = self.run_transport("{invalid}\n")
 
         self.assertEqual(exit_code, 0)
@@ -154,12 +169,14 @@ class StdioTransportTests(unittest.TestCase):
         self.assertIsNone(messages[0]["id"])
 
     def test_blank_line_is_a_parse_error_message(self) -> None:
+        """Regression check: blank line is a parse error message."""
         _, messages, diagnostics, _ = self.run_transport("\n")
 
         self.assertEqual(messages[0]["error"]["code"], PARSE_ERROR)
         self.assertEqual(diagnostics, "")
 
     def test_two_json_objects_on_one_line_are_rejected(self) -> None:
+        """Regression check: two json objects on one line are rejected."""
         payload = (
             json.dumps(initialize_request())
             + json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 2})
@@ -172,6 +189,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(messages[0]["error"]["code"], PARSE_ERROR)
 
     def test_incoming_response_is_rejected_as_invalid_request(self) -> None:
+        """Regression check: incoming response is rejected as invalid request."""
         payload = json_line({"jsonrpc": "2.0", "result": {}, "id": 1})
 
         _, messages, diagnostics, _ = self.run_transport(payload)
@@ -181,12 +199,14 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(diagnostics, "")
 
     def test_request_with_null_id_receives_response(self) -> None:
+        """Regression check: request with null id receives response."""
         _, messages, _, _ = self.run_transport(json_line(initialize_request(None)))
 
         self.assertEqual(len(messages), 1)
         self.assertIsNone(messages[0]["id"])
 
     def test_unknown_request_method_returns_method_not_found(self) -> None:
+        """Regression check: unknown request method returns method not found."""
         payload = json_line(
             {"jsonrpc": "2.0", "method": "unknown/method", "params": {}, "id": 8}
         )
@@ -197,6 +217,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(messages[0]["id"], 8)
 
     def test_each_response_is_flushed(self) -> None:
+        """Regression check: each response is flushed."""
         stdout = TrackingOutput()
         payload = json_line(initialize_request()) + "{invalid}\n"
 
@@ -209,6 +230,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertTrue(stdout.getvalue().endswith("\n"))
 
     def test_transport_failure_is_reported_only_to_stderr(self) -> None:
+        """Regression check: transport failure is reported only to stderr."""
         stdout = TrackingOutput()
         stderr = io.StringIO()
 
@@ -223,6 +245,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertIn("stdio transport failure: OSError", stderr.getvalue())
 
     def test_module_entry_point_handles_utf8_lifecycle_until_eof(self) -> None:
+        """Regression check: module entry point handles utf8 lifecycle until eof."""
         payload = "".join(
             (
                 json_line(initialize_request()),
@@ -271,10 +294,12 @@ class StdioTransportTests(unittest.TestCase):
 
     @staticmethod
     def _remove_database_files(database_path: Path) -> None:
+        """Support the controlled test scenario for remove database files."""
         for suffix in ("", "-shm", "-wal"):
             Path(f"{database_path}{suffix}").unlink(missing_ok=True)
 
     def test_stdio_can_call_read_only_stock_tool(self) -> None:
+        """Regression check: stdio can call read only stock tool."""
         payload = "".join(
             (
                 json_line(initialize_request()),
@@ -311,6 +336,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertEqual(stock[0]["quantity"], 25)
 
     def test_stdio_returns_domain_failure_as_successful_tool_result(self) -> None:
+        """Regression check: stdio returns domain failure as successful tool result."""
         payload = "".join(
             (
                 json_line(initialize_request()),
@@ -352,6 +378,7 @@ class StdioTransportTests(unittest.TestCase):
         )
 
     def test_stdio_supports_assessment_and_interaction_workflow(self) -> None:
+        """Regression check: stdio supports assessment and interaction workflow."""
         payload = "".join(
             (
                 json_line(initialize_request()),
@@ -410,6 +437,7 @@ class StdioTransportTests(unittest.TestCase):
         self.assertFalse(interactions["exhaustive"])
 
     def test_stdio_order_updates_stock_in_the_same_server_state(self) -> None:
+        """Regression check: stdio order updates stock in the same server state."""
         payload = "".join(
             (
                 json_line(initialize_request()),

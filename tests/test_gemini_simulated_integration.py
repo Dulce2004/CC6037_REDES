@@ -41,7 +41,9 @@ FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem@2026.8.31"
     "git, uvx, and npx are required for the simulated Gemini integration",
 )
 class SimulatedGeminiThreeServerTests(unittest.TestCase):
+    """Group regression checks for simulated gemini three server behavior and boundaries."""
     def test_gemini_context_tools_signatures_policies_and_cleanup(self) -> None:
+        """Regression check: gemini context tools signatures policies and cleanup."""
         temporary_root = Path(
             tempfile.mkdtemp(prefix=f"pharmacy-mcp-gemini-{uuid4().hex}-")
         ).resolve(strict=True)
@@ -257,11 +259,14 @@ class SimulatedGeminiThreeServerTests(unittest.TestCase):
 
 
 class _GeminiQueueTransport:
+    """Provide a deterministic gemini queue transport test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.responses = list(responses)
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         if not self.responses:
             raise AssertionError("Unexpected simulated Gemini request")
@@ -269,14 +274,17 @@ class _GeminiQueueTransport:
 
 
 def _text(value: str) -> HTTPResponse:
+    """Support the controlled test scenario for text."""
     return _response([{"text": value}], finish_reason="STOP")
 
 
 def _calls(*parts) -> HTTPResponse:
+    """Support the controlled test scenario for calls."""
     return _response(list(parts), finish_reason="STOP")
 
 
 def _call(identifier: str, name: str, arguments: dict[str, object], *, signature=None):
+    """Support the controlled test scenario for call."""
     part = {
         "functionCall": {"id": identifier, "name": name, "args": arguments}
     }
@@ -286,6 +294,7 @@ def _call(identifier: str, name: str, arguments: dict[str, object], *, signature
 
 
 def _response(parts, *, finish_reason: str) -> HTTPResponse:
+    """Support the controlled test scenario for response."""
     return HTTPResponse(
         status=200,
         headers={"x-goog-request-id": "simulated-request"},
@@ -304,6 +313,7 @@ def _response(parts, *, finish_reason: str) -> HTTPResponse:
 
 
 def _pharmacy_config(database_path: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for pharmacy config."""
     return StdioServerConfig(
         name="pharmacy",
         command=sys.executable,
@@ -322,6 +332,7 @@ def _pharmacy_config(database_path: Path) -> StdioServerConfig:
 
 
 def _git_config(repository: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for git config."""
     return StdioServerConfig(
         name="git",
         command="uvx",
@@ -341,6 +352,7 @@ def _git_config(repository: Path) -> StdioServerConfig:
 
 
 def _filesystem_config(repository: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for filesystem config."""
     if os.name == "nt":
         command = os.environ.get("COMSPEC", "cmd.exe")
         args = ("/d", "/s", "/c", "npx", "-y", FILESYSTEM_PACKAGE, str(repository))
@@ -372,6 +384,7 @@ def _filesystem_config(repository: Path) -> StdioServerConfig:
 
 
 def _git(repository: Path, *arguments: str) -> None:
+    """Support the controlled test scenario for git."""
     subprocess.run(
         ["git", "-C", str(repository), *arguments],
         check=True,
@@ -382,6 +395,7 @@ def _git(repository: Path, *arguments: str) -> None:
 
 
 def _remove_readonly(function: object, path: str, exception: BaseException) -> None:
+    """Support the controlled test scenario for remove readonly."""
     if not isinstance(exception, PermissionError) or not callable(function):
         raise exception
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)

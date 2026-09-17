@@ -24,7 +24,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class StdioMCPClientTests(unittest.TestCase):
+    """Group regression checks for stdio mcpclient behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         self.database_path = runtime_directory / (
@@ -47,6 +49,7 @@ class StdioMCPClientTests(unittest.TestCase):
         self.addCleanup(self.client.stop)
 
     def test_start_completes_lifecycle_and_lists_seven_tools(self) -> None:
+        """Regression check: start completes lifecycle and lists seven tools."""
         self.client.start()
 
         tools = self.client.list_tools()
@@ -68,6 +71,7 @@ class StdioMCPClientTests(unittest.TestCase):
         )
 
     def test_call_tool_uses_real_child_process(self) -> None:
+        """Regression check: call tool uses real child process."""
         self.client.start()
 
         result = self.client.call_tool(
@@ -81,6 +85,7 @@ class StdioMCPClientTests(unittest.TestCase):
         )
 
     def test_every_request_notification_and_response_is_visible_in_log(self) -> None:
+        """Regression check: every request notification and response is visible in log."""
         self.client.start()
         self.client.list_tools()
         self.client.call_tool(
@@ -123,6 +128,7 @@ class StdioMCPClientTests(unittest.TestCase):
         )
 
     def test_json_rpc_error_response_is_logged_and_exposed(self) -> None:
+        """Regression check: json rpc error response is logged and exposed."""
         self.client.start()
 
         with self.assertRaises(MCPServerResponseError) as context:
@@ -132,6 +138,7 @@ class StdioMCPClientTests(unittest.TestCase):
         self.assertIn('"message_type":"error"', self.log_stream.getvalue())
 
     def test_tool_execution_error_remains_a_successful_mcp_result(self) -> None:
+        """Regression check: tool execution error remains a successful mcp result."""
         self.client.start()
 
         result = self.client.call_tool(
@@ -143,6 +150,7 @@ class StdioMCPClientTests(unittest.TestCase):
         self.assertIn("Unknown order ID", result["content"][0]["text"])
 
     def test_stop_delivers_eof_and_child_exits_cleanly(self) -> None:
+        """Regression check: stop delivers eof and child exits cleanly."""
         self.client.start()
         process = self.client._process
         self.assertIsNotNone(process)
@@ -153,6 +161,7 @@ class StdioMCPClientTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0)
 
     def test_client_can_restart_after_a_clean_stop(self) -> None:
+        """Regression check: client can restart after a clean stop."""
         self.client.start()
         first_process_id = self.client.process_id
         self.client.stop()
@@ -165,10 +174,12 @@ class StdioMCPClientTests(unittest.TestCase):
         self.assertEqual(len(tools), 7)
 
     def test_request_before_start_is_rejected(self) -> None:
+        """Regression check: request before start is rejected."""
         with self.assertRaisesRegex(MCPTransportError, "not been started"):
             self.client.request("tools/list", {})
 
     def test_missing_executable_is_reported_as_transport_error(self) -> None:
+        """Regression check: missing executable is reported as transport error."""
         missing = StdioMCPClient(
             StdioServerConfig(
                 name="missing",
@@ -185,6 +196,7 @@ class StdioMCPClientTests(unittest.TestCase):
 
     @staticmethod
     def server_config(name: str, database_path: Path) -> StdioServerConfig:
+        """Support the controlled test scenario for server config."""
         return StdioServerConfig(
             name=name,
             command=sys.executable,
@@ -203,6 +215,7 @@ class StdioMCPClientTests(unittest.TestCase):
 
     @staticmethod
     def _remove_database_files(database_path: Path) -> None:
+        """Support the controlled test scenario for remove database files."""
         for suffix in ("", "-shm", "-wal"):
             Path(f"{database_path}{suffix}").unlink(missing_ok=True)
 

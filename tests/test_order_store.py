@@ -29,7 +29,9 @@ from pharmacy_mcp.pharmacy import (  # noqa: E402
 
 
 class SQLitePharmacyStoreTests(unittest.TestCase):
+    """Group regression checks for sqlite pharmacy store behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.catalog = load_default_catalog()
         self.initial_inventory = load_default_inventory(self.catalog)
         runtime_directory = PROJECT_DIRECTORY / "runtime"
@@ -46,10 +48,12 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.addCleanup(self.store.close)
 
     def _remove_database_files(self) -> None:
+        """Support the controlled test scenario for remove database files."""
         for suffix in ("", "-shm", "-wal"):
             Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
 
     def test_constructor_does_not_create_database_before_initialize(self) -> None:
+        """Regression check: constructor does not create database before initialize."""
         uninitialized_path = self.database_path.with_name(
             f"uninitialized-{uuid4().hex}.sqlite3"
         )
@@ -64,10 +68,12 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
             store.get_stock("zona-5", "MED-ANA-001")
 
     def test_initialization_seeds_validated_json_inventory(self) -> None:
+        """Regression check: initialization seeds validated json inventory."""
         self.assertEqual(self.store.get_stock("zona-5", "MED-ANA-001"), 25)
         self.assertEqual(len(self.store.list_records()), 30)
 
     def test_successful_order_decrements_stock_and_is_retrievable(self) -> None:
+        """Regression check: successful order decrements stock and is retrievable."""
         order = self.store.create_order(
             branch_id="zona-5",
             items=(
@@ -83,6 +89,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_order(order.order_id), order)
 
     def test_failed_multi_item_order_rolls_back_every_quantity(self) -> None:
+        """Regression check: failed multi item order rolls back every quantity."""
         with self.assertRaises(InsufficientStockError):
             self.store.create_order(
                 branch_id="zona-5",
@@ -101,6 +108,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(order_count, 0)
 
     def test_database_constraint_rejects_negative_stock(self) -> None:
+        """Regression check: database constraint rejects negative stock."""
         with closing(sqlite3.connect(self.database_path)) as connection:
             with self.assertRaises(sqlite3.IntegrityError):
                 connection.execute(
@@ -114,6 +122,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_stock("zona-5", "MED-ANA-001"), 25)
 
     def test_prescription_medication_requires_simulated_identifier(self) -> None:
+        """Regression check: prescription medication requires simulated identifier."""
         with self.assertRaises(PrescriptionRequiredError):
             self.store.create_order(
                 branch_id="zona-5",
@@ -123,6 +132,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_stock("zona-5", "MED-RX-001"), 6)
 
     def test_format_valid_prescription_reference_allows_simulated_order(self) -> None:
+        """Regression check: format valid prescription reference allows simulated order."""
         order = self.store.create_order(
             branch_id="zona-5",
             items=(OrderItemRequest(sku="MED-RX-001", quantity=1),),
@@ -134,6 +144,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_stock("zona-5", "MED-RX-001"), 5)
 
     def test_unknown_branch_or_sku_does_not_mutate_stock(self) -> None:
+        """Regression check: unknown branch or sku does not mutate stock."""
         with self.assertRaisesRegex(OrderExecutionError, "Unknown branch"):
             self.store.create_order(
                 branch_id="zona-10",
@@ -148,6 +159,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_stock("zona-5", "MED-ANA-001"), 25)
 
     def test_order_quantity_rejects_zero_negative_boolean_and_non_integer(self) -> None:
+        """Regression check: order quantity rejects zero negative boolean and non integer."""
         for quantity in (0, -1, True, 1.5):
             with self.subTest(quantity=quantity):
                 with self.assertRaisesRegex(ValueError, "quantity"):
@@ -157,10 +169,12 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
                     )
 
     def test_unknown_order_is_rejected(self) -> None:
+        """Regression check: unknown order is rejected."""
         with self.assertRaisesRegex(OrderLookupError, "Unknown order ID"):
             self.store.get_order("ORD-MISSING")
 
     def test_reinitialization_preserves_orders_and_updated_stock(self) -> None:
+        """Regression check: reinitialization preserves orders and updated stock."""
         order = self.store.create_order(
             branch_id="zona-5",
             items=(OrderItemRequest(sku="MED-ANA-001", quantity=3),),
@@ -176,6 +190,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         self.assertEqual(second_store.get_order(order.order_id), order)
 
     def test_concurrent_orders_cannot_oversell_units(self) -> None:
+        """Regression check: concurrent orders cannot oversell units."""
         second_store = SQLitePharmacyStore(
             database_path=self.database_path,
             catalog=self.catalog,
@@ -185,6 +200,7 @@ class SQLitePharmacyStoreTests(unittest.TestCase):
         barrier = Barrier(2)
 
         def attempt_order(store: SQLitePharmacyStore) -> str:
+            """Support the controlled test scenario for attempt order."""
             barrier.wait()
             try:
                 store.create_order(

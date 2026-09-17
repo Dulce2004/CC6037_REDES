@@ -23,7 +23,9 @@ from pharmacy_mcp.server import (  # noqa: E402
 
 
 class PharmacyQueryToolTests(unittest.TestCase):
+    """Group regression checks for pharmacy query tool behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.server = PharmacyMCPServer()
         initialization = self.server.process_request(
             Request(
@@ -51,6 +53,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         arguments: dict[str, object],
         request_id: int = 1,
     ) -> Response | ErrorResponse:
+        """Support the controlled test scenario for call tool."""
         result = self.server.process_request(
             Request(
                 method="tools/call",
@@ -68,6 +71,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         request_id: int,
         message_fragment: str,
     ) -> None:
+        """Apply the shared assertion for tool execution error."""
         self.assertIsInstance(response, Response)
         self.assertEqual(response.id, request_id)
         self.assertNotIn("error", response.to_dict())
@@ -77,6 +81,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertIn(message_fragment, content[0]["text"])
 
     def test_tools_list_publishes_exactly_seven_tools_in_workflow_order(self) -> None:
+        """Regression check: tools list publishes exactly seven tools in workflow order."""
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -96,6 +101,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_query_tool_schemas_publish_required_and_optional_fields(self) -> None:
+        """Regression check: query tool schemas publish required and optional fields."""
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -153,6 +159,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_search_medications_matches_alias(self) -> None:
+        """Regression check: search medications matches alias."""
         response = self.call_tool(
             "search_medications",
             {"query": "paracetamol"},
@@ -165,6 +172,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertIn("not medical advice", response.result["content"][0]["text"])
 
     def test_search_medications_matches_ingredient_and_category(self) -> None:
+        """Regression check: search medications matches ingredient and category."""
         ingredient_response = self.call_tool(
             "search_medications",
             {"query": "cloruro de sodio"},
@@ -192,6 +200,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_search_medications_filters_prescription_items(self) -> None:
+        """Regression check: search medications filters prescription items."""
         response = self.call_tool(
             "search_medications",
             {"query": "500 mg", "otc_only": True},
@@ -204,6 +213,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_search_medications_returns_successful_empty_result(self) -> None:
+        """Regression check: search medications returns successful empty result."""
         response = self.call_tool(
             "search_medications",
             {"query": "medicine that is not present"},
@@ -214,6 +224,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertEqual(response.result["structuredContent"]["medications"], [])
 
     def test_search_medications_rejects_invalid_arguments(self) -> None:
+        """Regression check: search medications rejects invalid arguments."""
         cases = (
             {},
             {"query": ""},
@@ -233,6 +244,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
                 self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_get_medication_details_returns_every_catalog_field(self) -> None:
+        """Regression check: get medication details returns every catalog field."""
         response = self.call_tool(
             "get_medication_details",
             {"sku": "med-ana-001"},
@@ -259,6 +271,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertIsInstance(medication["price"]["amount"], str)
 
     def test_get_medication_details_reports_prescription_status(self) -> None:
+        """Regression check: get medication details reports prescription status."""
         response = self.call_tool(
             "get_medication_details",
             {"sku": "MED-RX-001"},
@@ -272,6 +285,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_get_medication_details_rejects_malformed_arguments(self) -> None:
+        """Regression check: get medication details rejects malformed arguments."""
         cases = ({}, {"sku": ""}, {"sku": 123}, {"sku": "invalid sku!"})
 
         for index, arguments in enumerate(cases, start=1):
@@ -285,6 +299,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
                 self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_get_medication_details_reports_unknown_sku_as_tool_error(self) -> None:
+        """Regression check: get medication details reports unknown sku as tool error."""
         response = self.call_tool(
             "get_medication_details",
             {"sku": "MED-MISSING"},
@@ -298,6 +313,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_get_medication_details_rejects_unexpected_argument(self) -> None:
+        """Regression check: get medication details rejects unexpected argument."""
         response = self.call_tool(
             "get_medication_details",
             {"sku": "MED-ANA-001", "include_stock": True},
@@ -308,6 +324,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertIn("Unexpected tool arguments", response.error.message)
 
     def test_check_stock_returns_all_branches_when_branch_is_omitted(self) -> None:
+        """Regression check: check stock returns all branches when branch is omitted."""
         response = self.call_tool(
             "check_stock",
             {"sku": "MED-ANA-001"},
@@ -330,6 +347,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_check_stock_returns_one_requested_branch(self) -> None:
+        """Regression check: check stock returns one requested branch."""
         response = self.call_tool(
             "check_stock",
             {"sku": "med-ant-002", "branch_id": "zona-15"},
@@ -349,6 +367,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_check_stock_reports_zero_as_unavailable(self) -> None:
+        """Regression check: check stock reports zero as unavailable."""
         response = self.call_tool(
             "check_stock",
             {"sku": "MED-ANT-002", "branch_id": "zona-5"},
@@ -359,6 +378,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertFalse(stock["available"])
 
     def test_check_stock_rejects_malformed_arguments(self) -> None:
+        """Regression check: check stock rejects malformed arguments."""
         cases = (
             {},
             {"sku": ""},
@@ -380,6 +400,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
                 self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_check_stock_reports_domain_lookup_failures_as_tool_errors(self) -> None:
+        """Regression check: check stock reports domain lookup failures as tool errors."""
         cases = (
             ({"sku": "MED-MISSING"}, "Unknown medication SKU"),
             (
@@ -402,6 +423,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
                 )
 
     def test_check_stock_rejects_unexpected_arguments(self) -> None:
+        """Regression check: check stock rejects unexpected arguments."""
         response = self.call_tool(
             "check_stock",
             {"sku": "MED-ANA-001", "quantity": 1},
@@ -411,6 +433,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_check_stock_is_repeatable_and_read_only(self) -> None:
+        """Regression check: check stock is repeatable and read only."""
         first = self.call_tool(
             "check_stock",
             {"sku": "MED-RX-001", "branch_id": "mixco"},
@@ -431,6 +454,7 @@ class PharmacyQueryToolTests(unittest.TestCase):
         )
 
     def test_new_query_tool_requires_ready_server(self) -> None:
+        """Regression check: new query tool requires ready server."""
         server = PharmacyMCPServer()
 
         response = server.process_request(

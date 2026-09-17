@@ -1,4 +1,10 @@
-"""Núcleo local y manual del servidor MCP educativo."""
+"""Núcleo manual y agnóstico de transporte del servidor MCP educativo.
+
+Conserva el estado UNINITIALIZED/INITIALIZING/READY, correlaciona IDs y despacha
+``initialize``, notificaciones, ``tools/list`` y ``tools/call``. Las notificaciones
+nunca producen respuesta y los fallos se convierten en errores JSON-RPC o resultados
+de dominio según corresponda. El servidor posee el almacén inyectado y lo cierra de
+forma explícita."""
 
 from __future__ import annotations
 
@@ -87,6 +93,7 @@ class PharmacyMCPServer:
         protocol_version: str = SUPPORTED_PROTOCOL_VERSION,
         database_path: str | Path | None = None,
     ) -> None:
+        """Build one independent lifecycle with validated catalog, store and tool handlers."""
         self.name = name
         self.version = version
         self.protocol_version = protocol_version
@@ -194,6 +201,8 @@ class PharmacyMCPServer:
                 message="Invalid Request",
             )
 
+        # Capture the original ID once and reuse it for every success/error path.
+        # JSON-RPC correlation must survive handler failures unchanged.
         request_id = self._request_id(request)
 
         try:
@@ -204,6 +213,8 @@ class PharmacyMCPServer:
                 )
             result = handler(request)
         except JsonRpcError as exc:
+            # Notifications are intentionally silent even when invalid: JSON-RPC
+            # forbids a response when the request omitted its ID.
             if request.is_notification:
                 return None
             return self._error_response(
@@ -233,6 +244,7 @@ class PharmacyMCPServer:
             )
 
     def _handle_initialize(self, request: Request) -> JsonValue:
+        """Validate client capabilities and enter INITIALIZING for the supported version."""
         if request.is_notification:
             raise InvalidRequestError("'initialize' requires a request id.")
         if self.state is not ServerState.UNINITIALIZED:
@@ -267,6 +279,8 @@ class PharmacyMCPServer:
                 f"Supported version: '{self.protocol_version}'."
             )
 
+        # Transition only after the complete initialize payload and protocol version
+        # are valid.  A rejected handshake leaves the server reusable.
         self.state = ServerState.INITIALIZING
 
         return {
@@ -276,16 +290,20 @@ class PharmacyMCPServer:
         }
 
     def _handle_initialized_notification(self, request: Request) -> JsonValue:
+        """Accept only the ID-less lifecycle notification and transition to READY."""
         if not request.is_notification:
             raise InvalidRequestError(
                 "'notifications/initialized' must not include a request id."
             )
         self._object_params(request)
+        # Repeated or out-of-order notifications are harmless; only the single
+        # INITIALIZING -> READY edge changes lifecycle state.
         if self.state is ServerState.INITIALIZING:
             self.state = ServerState.READY
         return {}
 
     def _handle_tools_list(self, request: Request) -> JsonValue:
+        """Return defensive copies of registered definitions once the server is ready."""
         self._require_ready()
         self._object_params(request)
         return {
@@ -293,6 +311,7 @@ class PharmacyMCPServer:
         }
 
     def _handle_tools_call(self, request: Request) -> JsonValue:
+        """Validate name and arguments, then dispatch exactly one registered handler."""
         self._require_ready()
         params = self._object_params(request)
         tool_name = params.get("name")
@@ -318,6 +337,7 @@ class PharmacyMCPServer:
         return tool.handler(arguments)
 
     def _require_ready(self) -> None:
+        """Validate ready and raise a controlled error on violation."""
         if self.state is not ServerState.READY:
             raise ServerNotInitializedError(
                 "Server is not ready; complete MCP initialization first."
@@ -325,6 +345,7 @@ class PharmacyMCPServer:
 
     @staticmethod
     def _object_params(request: Request) -> dict[str, JsonValue]:
+        """Require object-shaped params while treating an omitted member as empty."""
         params = request.to_dict().get("params", {})
         if not isinstance(params, dict):
             raise InvalidParamsError("Method params must be an object.")
@@ -332,6 +353,7 @@ class PharmacyMCPServer:
 
     @staticmethod
     def _request_id(request: Request) -> JsonRpcId:
+        """Preserve a supplied correlation ID and map notification-only absence to null."""
         return request.to_dict().get("id")
 
     @staticmethod
@@ -341,6 +363,7 @@ class PharmacyMCPServer:
         code: int,
         message: str,
     ) -> ErrorResponse:
+        """Construct a JSON-RPC error correlated to the originating request."""
         return ErrorResponse(
             error=ErrorObject(code=code, message=message),
             id=request_id,

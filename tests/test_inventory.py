@@ -21,8 +21,10 @@ from pharmacy_mcp.pharmacy import (  # noqa: E402
 
 
 class InventoryRepositoryTests(unittest.TestCase):
+    """Group regression checks for inventory repository behavior and boundaries."""
     @classmethod
     def setUpClass(cls) -> None:
+        """Support the controlled test scenario for set up class."""
         cls.catalog = load_default_catalog()
         cls.inventory = load_default_inventory(cls.catalog)
         cls.branches = cls.catalog.list_branches()
@@ -30,24 +32,29 @@ class InventoryRepositoryTests(unittest.TestCase):
         cls.records = cls.inventory.list_records()
 
     def test_catalog_has_three_branches_and_ten_medications(self) -> None:
+        """Regression check: catalog has three branches and ten medications."""
         self.assertEqual(len(self.branches), 3)
         self.assertEqual(len(self.medications), 10)
 
     def test_inventory_has_exactly_thirty_records(self) -> None:
+        """Regression check: inventory has exactly thirty records."""
         self.assertEqual(len(self.records), 30)
 
     def test_branch_and_sku_combinations_are_unique(self) -> None:
+        """Regression check: branch and sku combinations are unique."""
         keys = [(record.branch_id, record.sku) for record in self.records]
 
         self.assertEqual(len(keys), len(set(keys)))
 
     def test_every_record_references_the_catalog(self) -> None:
+        """Regression check: every record references the catalog."""
         for record in self.records:
             with self.subTest(branch_id=record.branch_id, sku=record.sku):
                 self.assertIsNotNone(self.catalog.get_branch(record.branch_id))
                 self.assertIsNotNone(self.catalog.get_medication(record.sku))
 
     def test_every_expected_branch_and_sku_combination_exists(self) -> None:
+        """Regression check: every expected branch and sku combination exists."""
         expected_keys = {
             (branch.branch_id, medication.sku)
             for branch in self.branches
@@ -58,6 +65,7 @@ class InventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(actual_keys, expected_keys)
 
     def test_quantities_are_non_boolean_nonnegative_integers(self) -> None:
+        """Regression check: quantities are non boolean nonnegative integers."""
         for record in self.records:
             with self.subTest(branch_id=record.branch_id, sku=record.sku):
                 self.assertIsInstance(record.quantity, int)
@@ -65,15 +73,18 @@ class InventoryRepositoryTests(unittest.TestCase):
                 self.assertGreaterEqual(record.quantity, 0)
 
     def test_inventory_contains_out_of_stock_and_available_items(self) -> None:
+        """Regression check: inventory contains out of stock and available items."""
         quantities = {record.quantity for record in self.records}
 
         self.assertIn(0, quantities)
         self.assertTrue(any(quantity > 0 for quantity in quantities))
 
     def test_get_stock_returns_expected_quantity(self) -> None:
+        """Regression check: get stock returns expected quantity."""
         self.assertEqual(self.inventory.get_stock("zona-5", "MED-ANA-001"), 25)
 
     def test_same_sku_has_independent_branch_quantities(self) -> None:
+        """Regression check: same sku has independent branch quantities."""
         zona_5 = self.inventory.get_stock("zona-5", "MED-ANA-001")
         zona_15 = self.inventory.get_stock("zona-15", "MED-ANA-001")
         mixco = self.inventory.get_stock("mixco", "MED-ANA-001")
@@ -81,6 +92,7 @@ class InventoryRepositoryTests(unittest.TestCase):
         self.assertEqual((zona_5, zona_15, mixco), (25, 12, 0))
 
     def test_list_stock_returns_all_medications_for_branch(self) -> None:
+        """Regression check: list stock returns all medications for branch."""
         records = self.inventory.list_stock("zona-15")
 
         self.assertEqual(len(records), 10)
@@ -91,6 +103,7 @@ class InventoryRepositoryTests(unittest.TestCase):
         )
 
     def test_get_stock_across_branches_returns_three_records(self) -> None:
+        """Regression check: get stock across branches returns three records."""
         records = self.inventory.get_stock_across_branches("MED-ANT-002")
 
         self.assertEqual(len(records), 3)
@@ -100,6 +113,7 @@ class InventoryRepositoryTests(unittest.TestCase):
         )
 
     def test_unknown_branch_is_rejected(self) -> None:
+        """Regression check: unknown branch is rejected."""
         with self.assertRaisesRegex(InventoryLookupError, "Unknown branch"):
             self.inventory.get_stock("zona-10", "MED-ANA-001")
 
@@ -107,6 +121,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             self.inventory.list_stock("zona-10")
 
     def test_unknown_sku_is_rejected(self) -> None:
+        """Regression check: unknown sku is rejected."""
         with self.assertRaisesRegex(InventoryLookupError, "Unknown medication SKU"):
             self.inventory.get_stock("zona-5", "MED-MISSING")
 
@@ -114,6 +129,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             self.inventory.get_stock_across_branches("MED-MISSING")
 
     def test_inventory_record_rejects_negative_quantity(self) -> None:
+        """Regression check: inventory record rejects negative quantity."""
         with self.assertRaisesRegex(ValueError, "greater than or equal to zero"):
             InventoryRecord(
                 branch_id="zona-5",
@@ -122,6 +138,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             )
 
     def test_inventory_record_rejects_boolean_quantity(self) -> None:
+        """Regression check: inventory record rejects boolean quantity."""
         with self.assertRaisesRegex(ValueError, "integer"):
             InventoryRecord(
                 branch_id="zona-5",
@@ -130,6 +147,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             )
 
     def test_repository_rejects_duplicate_combination(self) -> None:
+        """Regression check: repository rejects duplicate combination."""
         duplicate = self.records[0]
 
         with self.assertRaisesRegex(InventoryValidationError, "Duplicate"):
@@ -139,6 +157,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             )
 
     def test_repository_rejects_unknown_catalog_references(self) -> None:
+        """Regression check: repository rejects unknown catalog references."""
         unknown_branch = InventoryRecord(
             branch_id="zona-10",
             sku="MED-ANA-001",
@@ -156,6 +175,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             InventoryRepository(catalog=self.catalog, records=(unknown_sku,))
 
     def test_repository_rejects_missing_combination(self) -> None:
+        """Regression check: repository rejects missing combination."""
         with self.assertRaisesRegex(InventoryValidationError, "Missing inventory"):
             InventoryRepository(
                 catalog=self.catalog,
@@ -163,6 +183,7 @@ class InventoryRepositoryTests(unittest.TestCase):
             )
 
     def test_loader_rejects_boolean_quantity_in_json_data(self) -> None:
+        """Regression check: loader rejects boolean quantity in json data."""
         invalid_json = (
             '[{"branch_id":"zona-5","sku":"MED-ANA-001","quantity":true}]'
         )

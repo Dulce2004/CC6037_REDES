@@ -55,7 +55,8 @@ htmlcov/
 Thumbs.db
 node_modules/
 
-# Local secrets and environment files
+# Local secrets and environment files must never enter the build context. Runtime
+# credentials are injected by the platform and are not copied into image layers.
 .env
 .env.*
 *.pem

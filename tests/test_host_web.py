@@ -43,7 +43,9 @@ from pharmacy_mcp.host.web import (  # noqa: E402
 
 
 class PharmacyWebTests(unittest.TestCase):
+    """Group regression checks for pharmacy web behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.manager = _FakeManager()
         self.clients = []
         self.plans: list[list[GeminiMessage]] = []
@@ -52,9 +54,11 @@ class PharmacyWebTests(unittest.TestCase):
         self._start()
 
     def tearDown(self) -> None:
+        """Release every process, socket, file, and fixture owned by the test."""
         self._stop()
 
     def test_html_static_files_and_accessible_controls_are_local(self) -> None:
+        """Regression check: html static files and accessible controls are local."""
         status, headers, body, cookie = self._request("GET", "/")
         self.assertEqual(status, 200)
         html = body.decode("utf-8")
@@ -81,6 +85,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn(b"cdn", css.lower() + javascript.lower())
 
     def test_frontend_has_one_initial_status_request_and_keeps_chat_polling(self) -> None:
+        """Regression check: frontend has one initial status request and keeps chat polling."""
         javascript = (
             PROJECT_DIRECTORY
             / "src"
@@ -94,6 +99,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(javascript.count('requestJson("/api/chat"'), 2)
 
     def test_focus_ring_token_meets_contrast_requirement(self) -> None:
+        """Regression check: focus ring token meets contrast requirement."""
         stylesheet = (
             PROJECT_DIRECTORY
             / "src"
@@ -111,6 +117,7 @@ class PharmacyWebTests(unittest.TestCase):
                 self.assertGreaterEqual(_contrast_ratio(focus_ring, background), 3.0)
 
     def test_routes_and_methods_are_explicit(self) -> None:
+        """Regression check: routes and methods are explicit."""
         self.assertEqual(self._request("GET", "/missing")[0], 404)
         status, headers, _, _ = self._request(
             "POST",
@@ -126,6 +133,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(self._request("GET", "/api/status?secret=x")[0], 404)
 
     def test_command_defaults_to_loopback_and_server_rejects_other_bindings(self) -> None:
+        """Regression check: command defaults to loopback and server rejects other bindings."""
         arguments = build_parser().parse_args([])
         self.assertEqual(arguments.host, DEFAULT_WEB_HOST)
         self.assertEqual(arguments.port, DEFAULT_WEB_PORT)
@@ -133,6 +141,7 @@ class PharmacyWebTests(unittest.TestCase):
             PharmacyWebServer(("0.0.0.0", 0), self.application)
 
     def test_status_omits_process_ids_and_private_configuration(self) -> None:
+        """Regression check: status omits process ids and private configuration."""
         status, _, body, _ = self._request("GET", "/api/status")
         self.assertEqual(status, 200)
         payload = json.loads(body)
@@ -145,6 +154,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn("api_key", serialized.casefold())
 
     def test_security_headers_are_present_and_cors_is_not_open(self) -> None:
+        """Regression check: security headers are present and cors is not open."""
         status, headers, _, _ = self._request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn("default-src 'self'", headers["content-security-policy"])
@@ -156,6 +166,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn("access-control-allow-origin", headers)
 
     def test_origin_check_rejects_post_with_body(self) -> None:
+        """Regression check: origin check rejects post with body."""
         status, _, _, _ = self._request(
             "POST",
             "/api/clear",
@@ -165,6 +176,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(status, 403)
 
     def test_host_check_rejects_post_with_body(self) -> None:
+        """Regression check: host check rejects post with body."""
         status, _, _, _ = self._request(
             "POST",
             "/api/clear",
@@ -174,6 +186,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(status, 421)
 
     def test_rejected_post_body_is_drained_once(self) -> None:
+        """Regression check: rejected post body is drained once."""
         handler, stream = _drain_handler(b"{}", {"Content-Length": "2"})
         self.assertTrue(handler._drain_rejected_post_body("POST"))
         self.assertTrue(handler._request_body_read_started)
@@ -195,6 +208,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(truncated_stream.read_sizes, [2])
 
     def test_rejected_post_body_drain_rejects_unsafe_lengths_and_encodings(self) -> None:
+        """Regression check: rejected post body drain rejects unsafe lengths and encodings."""
         cases = (
             ("GET", {"Content-Length": "2"}, b"{}"),
             ("PUT", {"Content-Length": "2"}, b"{}"),
@@ -249,6 +263,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(duplicate_stream.read_sizes, [])
 
     def test_browser_sessions_have_independent_history(self) -> None:
+        """Regression check: browser sessions have independent history."""
         cookie_one = self._new_cookie()
         cookie_two = self._new_cookie()
         self.assertNotEqual(cookie_one, cookie_two)
@@ -280,6 +295,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn("mensaje uno", two_text)
 
     def test_context_is_preserved_then_clear_removes_it(self) -> None:
+        """Regression check: context is preserved then clear removes it."""
         cookie = self._new_cookie()
         self._chat(cookie, "primer turno")
         self._chat(cookie, "segundo turno")
@@ -303,6 +319,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(third_request[0]["content"], "después de limpiar")
 
     def test_simulated_gemini_transport_is_used_without_network(self) -> None:
+        """Regression check: simulated gemini transport is used without network."""
         credential = "gemini-test-secret-never-expose"
         transport = _GeminiQueueTransport([_gemini_text_response("Respuesta Gemini simulada")])
         self.client_builder = lambda: GeminiGenerateContentClient(
@@ -319,6 +336,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertNotIn(credential, self._request("GET", "/")[2].decode("utf-8"))
 
     def test_single_and_multiple_tool_calls_use_existing_orchestrator(self) -> None:
+        """Regression check: single and multiple tool calls use existing orchestrator."""
         self.plans.append(
             [
                 _tool_message(
@@ -340,6 +358,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(roles[-1], "assistant")
 
     def test_mutation_acceptance_is_one_time_and_arguments_are_sanitized(self) -> None:
+        """Regression check: mutation acceptance is one time and arguments are sanitized."""
         sensitive = "secret-prescription-value"
         self.plans.append(
             [
@@ -382,6 +401,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(replay[0], 409)
 
     def test_mutation_rejection_and_default_rejection_do_not_invoke(self) -> None:
+        """Regression check: mutation rejection and default rejection do not invoke."""
         for explicit in (True, False):
             with self.subTest(explicit_rejection=explicit):
                 self.plans.append(
@@ -415,6 +435,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(self.manager.invocations, [])
 
     def test_each_mutation_in_multiple_tool_response_is_confirmed(self) -> None:
+        """Regression check: each mutation in multiple tool response is confirmed."""
         self.plans.append(
             [
                 _tool_message(
@@ -451,6 +472,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(self.manager.invocations[0][1]["sku"], "A")
 
     def test_invalid_and_expired_confirmations_are_rejected(self) -> None:
+        """Regression check: invalid and expired confirmations are rejected."""
         self._restart(confirmation_timeout_seconds=0.12)
         self.plans.append(
             [
@@ -482,6 +504,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(expired[0], 409)
 
     def test_busy_session_rejects_new_chat_and_clear(self) -> None:
+        """Regression check: busy session rejects new chat and clear."""
         release = threading.Event()
         self.client_builder = lambda: _BlockingClient(release)
         cookie = self._new_cookie()
@@ -509,6 +532,7 @@ class PharmacyWebTests(unittest.TestCase):
         self._wait_for(cookie, "idle")
 
     def test_content_type_utf8_and_json_shape_are_validated(self) -> None:
+        """Regression check: content type utf8 and json shape are validated."""
         cookie = self._new_cookie()
         cases = [
             ({"Content-Type": "application/json; charset=latin-1"}, b"{}", 415),
@@ -529,6 +553,7 @@ class PharmacyWebTests(unittest.TestCase):
                 self.assertEqual(status, expected)
 
     def test_content_type_check_rejects_post_with_body(self) -> None:
+        """Regression check: content type check rejects post with body."""
         cookie = self._new_cookie()
         status = self._request(
             "POST",
@@ -540,6 +565,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(status, 415)
 
     def test_request_message_and_response_limits_are_enforced(self) -> None:
+        """Regression check: request message and response limits are enforced."""
         cookie = self._new_cookie()
         long_message = "x" * 8_001
         status = self._request(
@@ -569,6 +595,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertIn("excede el límite", body.decode("utf-8"))
 
     def test_secrets_do_not_appear_in_html_json_log_or_safe_errors(self) -> None:
+        """Regression check: secrets do not appear in html json log or safe errors."""
         self._stop()
         secret = "GEMINI-KEY-DO-NOT-LEAK-123"
         log_path = PROJECT_DIRECTORY / "runtime" / f".web-test-{uuid4().hex}.jsonl"
@@ -602,6 +629,7 @@ class PharmacyWebTests(unittest.TestCase):
             self._start()
 
     def test_application_close_stops_manager_once_and_is_idempotent(self) -> None:
+        """Regression check: application close stops manager once and is idempotent."""
         app = self.application
         self.server.shutdown()
         self.server.server_close()
@@ -614,6 +642,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.application = None
 
     def test_close_rejects_a_pending_mutation_before_stopping_manager(self) -> None:
+        """Regression check: close rejects a pending mutation before stopping manager."""
         self.plans.append(
             [
                 _tool_message(
@@ -635,6 +664,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.application = None
 
     def _scripted_client(self):
+        """Support the controlled test scenario for scripted client."""
         plan = self.plans.pop(0) if self.plans else []
         client = _ScriptedClient(plan)
         self.clients.append(client)
@@ -647,6 +677,7 @@ class PharmacyWebTests(unittest.TestCase):
         confirmation_timeout_seconds=1.0,
         max_response_bytes=262_144,
     ) -> None:
+        """Support the controlled test scenario for start."""
         self.application = PharmacyWebApplication(
             self.manager,
             lambda: self.client_builder(),
@@ -663,6 +694,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.thread.start()
 
     def _stop(self) -> None:
+        """Support the controlled test scenario for stop."""
         server = getattr(self, "server", None)
         if server is not None:
             server.shutdown()
@@ -675,6 +707,7 @@ class PharmacyWebTests(unittest.TestCase):
             self.application = None
 
     def _restart(self, **kwargs) -> None:
+        """Support the controlled test scenario for restart."""
         self._stop()
         self.manager = _FakeManager()
         self.clients.clear()
@@ -690,6 +723,7 @@ class PharmacyWebTests(unittest.TestCase):
         cookie=None,
         headers=None,
     ):
+        """Support the controlled test scenario for request."""
         request_headers = dict(headers or {})
         body = raw_body
         if payload is not None:
@@ -710,12 +744,14 @@ class PharmacyWebTests(unittest.TestCase):
             connection.close()
 
     def _new_cookie(self):
+        """Support the controlled test scenario for new cookie."""
         status, _, _, cookie = self._request("GET", "/api/status")
         self.assertEqual(status, 200)
         self.assertIsNotNone(cookie)
         return cookie
 
     def _post_chat(self, cookie, message):
+        """Support the controlled test scenario for post chat."""
         status, _, body, _ = self._request(
             "POST",
             "/api/chat",
@@ -725,10 +761,12 @@ class PharmacyWebTests(unittest.TestCase):
         self.assertEqual(status, 202, body)
 
     def _chat(self, cookie, message):
+        """Support the controlled test scenario for chat."""
         self._post_chat(cookie, message)
         return self._wait_for(cookie, "idle")
 
     def _wait_for(self, cookie, state, *, timeout=2.0):
+        """Support the controlled test scenario for wait for."""
         deadline = time.monotonic() + timeout
         last = None
         while time.monotonic() < deadline:
@@ -741,6 +779,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.fail(f"Session never reached {state}; last={last}")
 
     def _wait_for_new_confirmation(self, cookie, previous_id):
+        """Support the controlled test scenario for wait for new confirmation."""
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             state = self._wait_for(cookie, "awaiting_confirmation")
@@ -751,6 +790,7 @@ class PharmacyWebTests(unittest.TestCase):
         self.fail("A second distinct confirmation was not created")
 
     def _poll_until_http_complete(self, cookie):
+        """Support the controlled test scenario for poll until http complete."""
         deadline = time.monotonic() + 2
         last = None
         while time.monotonic() < deadline:
@@ -764,7 +804,9 @@ class PharmacyWebTests(unittest.TestCase):
 
 
 class _FakeManager:
+    """Provide a deterministic fake manager test double for isolated scenarios."""
     def __init__(self) -> None:
+        """Support the controlled test scenario for init."""
         self.invocations = []
         self.stop_count = 0
         self.tools = (
@@ -786,6 +828,7 @@ class _FakeManager:
         self.by_name = {tool.namespaced_name: tool for tool in self.tools}
 
     def list_servers(self):
+        """Support the controlled test scenario for list servers."""
         return (
             ServerSummary(
                 name="pharmacy",
@@ -797,15 +840,19 @@ class _FakeManager:
         )
 
     def list_tools(self):
+        """Support the controlled test scenario for list tools."""
         return self.tools
 
     def resolve_tool(self, name):
+        """Support the controlled test scenario for resolve tool."""
         return self.by_name[name]
 
     def requires_confirmation(self, name):
+        """Support the controlled test scenario for requires confirmation."""
         return name == "pharmacy__create_order"
 
     def invoke_tool(self, name, arguments, *, allow_mutation=False):
+        """Support the controlled test scenario for invoke tool."""
         self.invocations.append((name, deepcopy(arguments), allow_mutation))
         return {
             "content": [
@@ -818,22 +865,27 @@ class _FakeManager:
         }
 
     def stop_all(self):
+        """Support the controlled test scenario for stop all."""
         self.stop_count += 1
 
 
 class _ScriptedClient:
+    """Provide a deterministic scripted client test double for isolated scenarios."""
     provider_name = "gemini"
     model_name = "gemini-simulated"
     max_tool_rounds = 8
 
     def __init__(self, plan) -> None:
+        """Support the controlled test scenario for init."""
         self.plan = list(plan)
         self.requests = []
 
     def prepare_tools(self, tools):
+        """Support the controlled test scenario for prepare tools."""
         return [{"name": tool.namespaced_name} for tool in tools]
 
     def create_message(self, *, messages, tools=None, system=None):
+        """Build the deterministic create message fixture used by this test module."""
         self.requests.append(deepcopy(messages))
         if self.plan:
             return self.plan.pop(0)
@@ -846,11 +898,14 @@ class _ScriptedClient:
 
 
 class _BlockingClient(_ScriptedClient):
+    """Provide a deterministic blocking client test double for isolated scenarios."""
     def __init__(self, release) -> None:
+        """Support the controlled test scenario for init."""
         super().__init__([])
         self.release = release
 
     def create_message(self, *, messages, tools=None, system=None):
+        """Build the deterministic create message fixture used by this test module."""
         self.requests.append(deepcopy(messages))
         if not self.release.wait(timeout=2):
             raise RuntimeError("test release timed out")
@@ -858,20 +913,26 @@ class _BlockingClient(_ScriptedClient):
 
 
 class _ExplodingClient(_ScriptedClient):
+    """Provide a deterministic exploding client test double for isolated scenarios."""
     def __init__(self, secret) -> None:
+        """Support the controlled test scenario for init."""
         super().__init__([])
         self.secret = secret
 
     def create_message(self, *, messages, tools=None, system=None):
+        """Build the deterministic create message fixture used by this test module."""
         raise RuntimeError(f"provider failed with {self.secret}")
 
 
 class _GeminiQueueTransport:
+    """Provide a deterministic gemini queue transport test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.responses = list(responses)
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         if not self.responses:
             raise AssertionError("Unexpected simulated Gemini request")
@@ -879,6 +940,7 @@ class _GeminiQueueTransport:
 
 
 def _text_message(text):
+    """Support the controlled test scenario for text message."""
     return GeminiMessage(
         message_id=f"message-{uuid4().hex}",
         content=({"type": "text", "text": text},),
@@ -889,6 +951,7 @@ def _text_message(text):
 
 
 def _tool_message(*calls):
+    """Support the controlled test scenario for tool message."""
     return GeminiMessage(
         message_id=f"message-{uuid4().hex}",
         content=tuple(calls),
@@ -900,6 +963,7 @@ def _tool_message(*calls):
 
 
 def _tool_call(identifier, name, arguments):
+    """Support the controlled test scenario for tool call."""
     return {
         "type": "tool_use",
         "id": identifier,
@@ -909,6 +973,7 @@ def _tool_call(identifier, name, arguments):
 
 
 def _gemini_text_response(text):
+    """Support the controlled test scenario for gemini text response."""
     return HTTPResponse(
         status=200,
         headers={"x-goog-request-id": "simulated-request"},
@@ -927,16 +992,20 @@ def _gemini_text_response(text):
 
 
 class _ReadTrackingStream:
+    """Provide a deterministic read tracking stream test double for isolated scenarios."""
     def __init__(self, body: bytes) -> None:
+        """Support the controlled test scenario for init."""
         self._stream = BytesIO(body)
         self.read_sizes: list[int] = []
 
     def read(self, size: int = -1) -> bytes:
+        """Support the controlled test scenario for read."""
         self.read_sizes.append(size)
         return self._stream.read(size)
 
 
 def _drain_handler(body: bytes, headers: dict[str, str]):
+    """Support the controlled test scenario for drain handler."""
     handler = object.__new__(PharmacyWebRequestHandler)
     handler.server = SimpleNamespace(
         application=SimpleNamespace(max_request_bytes=DEFAULT_MAX_REQUEST_BYTES)
@@ -952,7 +1021,9 @@ def _drain_handler(body: bytes, headers: dict[str, str]):
 
 
 def _contrast_ratio(first: str, second: str) -> float:
+    """Support the controlled test scenario for contrast ratio."""
     def luminance(color: str) -> float:
+        """Support the controlled test scenario for luminance."""
         channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
         linear = [
             channel / 12.92

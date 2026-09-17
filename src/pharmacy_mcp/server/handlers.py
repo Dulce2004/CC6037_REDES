@@ -1,4 +1,8 @@
-"""Representación mínima de herramientas registradas en el servidor MCP."""
+"""Representación mínima de herramientas registradas en el servidor MCP.
+
+``Tool`` une nombre, descripción, schema, anotaciones y callable después de validar su
+forma pública. ``to_definition`` devuelve una copia apta para ``tools/list`` sin
+exponer el handler Python. Registrar o serializar una definición no ejecuta la tool."""
 
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ class Tool:
     handler: ToolHandler = field(repr=False)
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed tool invariants."""
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("Tool name must be a non-empty string.")
         if not isinstance(self.description, str):

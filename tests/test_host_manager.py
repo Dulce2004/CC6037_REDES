@@ -24,7 +24,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class MCPServerManagerTests(unittest.TestCase):
+    """Group regression checks for mcpserver manager behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         self.database_paths = tuple(
@@ -54,6 +56,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.addCleanup(self.manager.stop_all)
 
     def test_lists_multiple_configured_servers_without_starting_them(self) -> None:
+        """Regression check: lists multiple configured servers without starting them."""
         summaries = self.manager.list_servers()
 
         self.assertEqual([item.name for item in summaries], ["pharmacy", "backup"])
@@ -61,6 +64,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertTrue(all(item.process_id is None for item in summaries))
 
     def test_start_server_registers_namespaced_tools(self) -> None:
+        """Regression check: start server registers namespaced tools."""
         self.manager.start_server("pharmacy")
 
         names = [tool.namespaced_name for tool in self.manager.list_tools()]
@@ -82,6 +86,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertIsNotNone(summary.process_id)
 
     def test_start_all_keeps_same_tool_names_separate(self) -> None:
+        """Regression check: start all keeps same tool names separate."""
         self.manager.start_all()
 
         names = [tool.namespaced_name for tool in self.manager.list_tools()]
@@ -91,6 +96,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertIn("backup__check_stock", names)
 
     def test_namespaced_invocation_routes_to_independent_server_state(self) -> None:
+        """Regression check: namespaced invocation routes to independent server state."""
         self.manager.start_all()
 
         created = self.manager.invoke_tool(
@@ -123,6 +129,7 @@ class MCPServerManagerTests(unittest.TestCase):
         )
 
     def test_stopping_one_server_removes_only_its_tools(self) -> None:
+        """Regression check: stopping one server removes only its tools."""
         self.manager.start_all()
 
         self.manager.stop_server("pharmacy")
@@ -134,6 +141,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.list_servers()[1].status, "ready")
 
     def test_invalid_namespace_and_unknown_tool_are_rejected(self) -> None:
+        """Regression check: invalid namespace and unknown tool are rejected."""
         with self.assertRaisesRegex(MCPHostError, "<server>__<tool>"):
             self.manager.server_name_from_namespace("check_stock")
         with self.assertRaisesRegex(MCPHostError, "Unknown configured server"):
@@ -150,6 +158,7 @@ class MCPServerManagerTests(unittest.TestCase):
             self.manager.invoke_tool("pharmacy__unknown", {})
 
     def test_global_name_resolves_to_server_and_original_tool(self) -> None:
+        """Regression check: global name resolves to server and original tool."""
         self.manager.start_server("pharmacy")
 
         tool = self.manager.resolve_tool("pharmacy__check_stock")
@@ -158,6 +167,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertEqual(tool.tool_name, "check_stock")
 
     def test_partial_failure_rolls_back_every_server_started_by_start_all(self) -> None:
+        """Regression check: partial failure rolls back every server started by start all."""
         configs = tuple(
             self.server_config(name, self.database_paths[index % 2])
             for index, name in enumerate(("pharmacy", "git", "filesystem"))
@@ -169,6 +179,7 @@ class MCPServerManagerTests(unittest.TestCase):
         clients: dict[str, _StartClient] = {}
 
         def create_client(config, *, protocol_logger):
+            """Build the deterministic create client fixture used by this test module."""
             client = _StartClient(
                 config.name,
                 fail_on_start=config.name == "filesystem",
@@ -189,6 +200,7 @@ class MCPServerManagerTests(unittest.TestCase):
         self.assertEqual(manager.list_tools(), ())
 
     def test_start_available_preserves_successes_and_marks_failure(self) -> None:
+        """Regression check: start available preserves successes and marks failure."""
         configs = tuple(
             self.server_config(name, self.database_paths[index % 2])
             for index, name in enumerate(("pharmacy", "git", "filesystem"))
@@ -200,6 +212,7 @@ class MCPServerManagerTests(unittest.TestCase):
         clients: dict[str, _StartClient] = {}
 
         def create_client(config, *, protocol_logger):
+            """Build the deterministic create client fixture used by this test module."""
             client = _StartClient(
                 config.name,
                 fail_on_start=config.name == "git",
@@ -225,6 +238,7 @@ class MCPServerManagerTests(unittest.TestCase):
         manager.stop_all()
 
     def test_pharmacy_order_requires_confirmation_but_queries_do_not(self) -> None:
+        """Regression check: pharmacy order requires confirmation but queries do not."""
         self.manager.start_server("pharmacy")
 
         self.assertTrue(
@@ -244,6 +258,7 @@ class MCPServerManagerTests(unittest.TestCase):
     def test_server_tool_name_with_separator_or_unsafe_character_is_rejected(
         self,
     ) -> None:
+        """Regression check: server tool name with separator or unsafe character is rejected."""
         config = self.manager._config.servers[0]
         for tool_name in (
             "group__tool",
@@ -265,6 +280,7 @@ class MCPServerManagerTests(unittest.TestCase):
                     )
 
     def test_real_tool_annotations_schemas_and_extra_fields_are_preserved(self) -> None:
+        """Regression check: real tool annotations schemas and extra fields are preserved."""
         config = self.manager._config.servers[0]
         definition = {
             "name": "read_text_file",
@@ -288,6 +304,7 @@ class MCPServerManagerTests(unittest.TestCase):
 
     @staticmethod
     def server_config(name: str, database_path: Path) -> StdioServerConfig:
+        """Support the controlled test scenario for server config."""
         return StdioServerConfig(
             name=name,
             command=sys.executable,
@@ -305,13 +322,16 @@ class MCPServerManagerTests(unittest.TestCase):
         )
 
     def _remove_database_files(self) -> None:
+        """Support the controlled test scenario for remove database files."""
         for database_path in self.database_paths:
             for suffix in ("", "-shm", "-wal"):
                 Path(f"{database_path}{suffix}").unlink(missing_ok=True)
 
 
 class _StartClient:
+    """Provide a deterministic start client test double for isolated scenarios."""
     def __init__(self, name: str, *, fail_on_start: bool) -> None:
+        """Support the controlled test scenario for init."""
         self.name = name
         self.fail_on_start = fail_on_start
         self.is_ready = False
@@ -319,14 +339,17 @@ class _StartClient:
 
     @property
     def process_id(self) -> int | None:
+        """Support the controlled test scenario for process id."""
         return None
 
     def start(self) -> None:
+        """Support the controlled test scenario for start."""
         if self.fail_on_start:
             raise RuntimeError("start failed")
         self.is_ready = True
 
     def list_tools(self):
+        """Support the controlled test scenario for list tools."""
         return (
             {
                 "name": "sample_tool",
@@ -336,6 +359,7 @@ class _StartClient:
         )
 
     def stop(self) -> None:
+        """Support the controlled test scenario for stop."""
         self.stopped = True
         self.is_ready = False
 

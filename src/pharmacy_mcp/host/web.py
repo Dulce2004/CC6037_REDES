@@ -1,4 +1,11 @@
-"""Loopback-only web interface for the existing LLM-to-MCP chat host."""
+"""Loopback-only web interface for the existing LLM-to-MCP chat host.
+
+A threaded standard-library HTTP server exposes static assets and bounded JSON routes
+while each browser cookie maps to an isolated in-memory conversation. Host/origin
+checks, secure response headers, request draining and one-time mutation confirmations
+protect the local boundary; the backend alone owns credentials and MCP clients.
+Starting the server creates processes through the injected manager and ``close``
+releases sessions, clients and sockets deterministically."""
 
 from __future__ import annotations
 
@@ -67,6 +74,7 @@ class WebHTTPError(RuntimeError):
         *,
         allow: str | None = None,
     ) -> None:
+        """Represent a safe HTTP status/message pair for the local web boundary."""
         super().__init__(message)
         self.status = int(status)
         self.allow = allow
@@ -74,6 +82,7 @@ class WebHTTPError(RuntimeError):
 
 @dataclass(slots=True)
 class PendingConfirmation:
+    """Hold the validated pending confirmation data exchanged by this module."""
     confirmation_id: str
     server: str
     tool: str
@@ -91,6 +100,7 @@ class _CombinedSessionLogger:
         session: WebConversationSession,
         durable_logger: MCPProtocolLogger | None,
     ) -> None:
+        """Fan session events into the UI callback and redacted protocol logger."""
         self._session = session
         self._durable_logger = durable_logger
 
@@ -100,6 +110,7 @@ class _CombinedSessionLogger:
         event_type: str,
         payload: dict[str, JsonValue],
     ) -> None:
+        """Forward one bounded orchestration event to both configured sinks."""
         if self._durable_logger is not None:
             self._durable_logger.orchestrator_event(
                 category,
@@ -124,6 +135,7 @@ class WebConversationSession:
         ),
         max_display_messages: int = DEFAULT_MAX_DISPLAY_MESSAGES,
     ) -> None:
+        """Create one isolated browser conversation and its confirmation state machine."""
         if confirmation_timeout_seconds < 0.05:
             raise ValueError("confirmation_timeout_seconds must be at least 0.05")
         if not 8 <= max_display_messages <= 1_000:
@@ -152,19 +164,23 @@ class WebConversationSession:
 
     @property
     def last_access(self) -> float:
+        """Return the monotonic timestamp used for idle-session eviction."""
         with self._condition:
             return self._last_access
 
     @property
     def is_idle(self) -> bool:
+        """Return whether no turn or confirmation transition is in progress."""
         with self._condition:
             return self._state == "idle" and self._worker is None
 
     def touch(self) -> None:
+        """Refresh the session's monotonic last-access timestamp."""
         with self._condition:
             self._last_access = time.monotonic()
 
     def submit(self, text: str) -> dict[str, JsonValue]:
+        """Queue one normalized user turn when this browser session is idle."""
         if not isinstance(text, str):
             raise WebHTTPError(HTTPStatus.BAD_REQUEST, "El mensaje debe ser texto.")
         normalized = text.strip()
@@ -175,6 +191,9 @@ class WebConversationSession:
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 "El mensaje excede el límite de 8000 caracteres.",
             )
+        # The condition protects message history, state, pending confirmation and
+        # worker ownership as one state machine.  Only one LLM turn may exist per
+        # browser session, while other sessions use their own locks and workers.
         with self._condition:
             self._last_access = time.monotonic()
             if self._closing:
@@ -204,6 +223,7 @@ class WebConversationSession:
         confirmation_id: str,
         accept: bool,
     ) -> dict[str, JsonValue]:
+        """Resolve the matching one-time mutation decision before its deadline."""
         if not isinstance(confirmation_id, str) or not confirmation_id:
             raise WebHTTPError(
                 HTTPStatus.BAD_REQUEST,
@@ -222,6 +242,8 @@ class WebConversationSession:
                     HTTPStatus.CONFLICT,
                     "No existe una confirmación pendiente.",
                 )
+            # Treat confirmation IDs like capabilities: comparison is constant-time,
+            # IDs are single-use, and a mismatch never reveals the pending value.
             if not hmac.compare_digest(
                 pending.confirmation_id,
                 confirmation_id,
@@ -248,6 +270,7 @@ class WebConversationSession:
             return self._snapshot_locked()
 
     def clear(self) -> dict[str, JsonValue]:
+        """Clear an idle session's messages while preserving its backend connections."""
         with self._condition:
             self._last_access = time.monotonic()
             if self._state != "idle" or self._worker is not None:
@@ -261,6 +284,7 @@ class WebConversationSession:
             return self._snapshot_locked()
 
     def snapshot(self) -> dict[str, JsonValue]:
+        """Return a defensive, JSON-safe view of this browser session."""
         with self._condition:
             self._last_access = time.monotonic()
             return self._snapshot_locked()
@@ -271,6 +295,7 @@ class WebConversationSession:
         event_type: str,
         payload: dict[str, JsonValue],
     ) -> None:
+        """Translate safe orchestrator events into transient UI session state."""
         if category != "mcp" and category != "policy":
             return
         with self._condition:
@@ -301,6 +326,7 @@ class WebConversationSession:
                 self._append_message("tool", f"{server} · {label}: {decision}.")
 
     def close(self, *, timeout_seconds: float = 35.0) -> bool:
+        """Release close without leaking owned resources."""
         with self._condition:
             self._closing = True
             if self._pending is not None and self._pending.decision is None:
@@ -313,6 +339,7 @@ class WebConversationSession:
             return self._worker is None
 
     def _run_turn(self, text: str) -> None:
+        """Execute one chat turn in the owned worker and publish only bounded output."""
         try:
             response = self.orchestrator.run_turn(text)
         except ChatError as exc:
@@ -337,6 +364,7 @@ class WebConversationSession:
                 self._condition.notify_all()
 
     def _confirm_mutation(self, prompt: str) -> str:
+        """Block the worker on one expiring, one-time browser confirmation decision."""
         details = _confirmation_details(prompt)
         with self._condition:
             pending = PendingConfirmation(
@@ -375,6 +403,7 @@ class WebConversationSession:
             return "sí" if accepted else "no"
 
     def _append_message(self, role: str, text: str) -> None:
+        """Append a role-labelled message after enforcing display and history limits."""
         self._messages.append(
             {
                 "role": role,
@@ -400,6 +429,7 @@ class WebConversationSession:
         self._revision += 1
 
     def _snapshot_locked(self) -> dict[str, JsonValue]:
+        """Assemble a consistent session snapshot while the state lock is held."""
         pending: dict[str, JsonValue] | None = None
         if self._pending is not None:
             pending = {
@@ -431,6 +461,7 @@ class WebSessionStore:
         idle_seconds: int = DEFAULT_SESSION_IDLE_SECONDS,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
     ) -> None:
+        """Create a bounded, idle-expiring map of cookie IDs to browser sessions."""
         if not 60 <= idle_seconds <= 86_400:
             raise ValueError("idle_seconds must be from 60 through 86400")
         if not 1 <= max_sessions <= 1_000:
@@ -443,16 +474,19 @@ class WebSessionStore:
 
     @property
     def idle_seconds(self) -> int:
+        """Return the configured inactivity lifetime for a browser session."""
         return self._idle_seconds
 
     @property
     def max_sessions(self) -> int:
+        """Return the hard cap on simultaneous in-memory browser sessions."""
         return self._max_sessions
 
     def get_or_create(
         self,
         candidate_id: str | None,
     ) -> tuple[WebConversationSession, str, bool]:
+        """Reuse a valid live browser session or create one within the fixed cap."""
         stale: list[WebConversationSession] = []
         now = time.monotonic()
         with self._lock:
@@ -473,11 +507,14 @@ class WebSessionStore:
                     result = self._create_locked()
             else:
                 result = self._create_locked()
+        # Session.close may wait for a worker and call manager resources, so it runs
+        # after releasing the store lock to avoid blocking unrelated cookies.
         for session in stale:
             session.close(timeout_seconds=1.0)
         return result
 
     def close(self, *, timeout_seconds: float = 35.0) -> bool:
+        """Detach all sessions and spend one shared timeout closing their workers."""
         with self._lock:
             sessions = tuple(self._sessions.values())
             self._sessions.clear()
@@ -491,6 +528,7 @@ class WebSessionStore:
     def _create_locked(
         self,
     ) -> tuple[WebConversationSession, str, bool]:
+        """Create an unguessable session while the store lock is already held."""
         if len(self._sessions) >= self._max_sessions:
             raise WebHTTPError(
                 HTTPStatus.SERVICE_UNAVAILABLE,
@@ -526,6 +564,7 @@ class PharmacyWebApplication:
         max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
+        """Bind the provider factory, MCP manager and isolated session store."""
         if not 1_024 <= max_request_bytes <= 1_000_000:
             raise ValueError("max_request_bytes must be from 1024 through 1000000")
         if not 4_096 <= max_response_bytes <= 2_000_000:
@@ -544,6 +583,7 @@ class PharmacyWebApplication:
         self._close_lock = threading.Lock()
 
         def new_session() -> WebConversationSession:
+            """Build session from validated inputs."""
             return WebConversationSession(
                 manager,
                 client_factory(),
@@ -559,6 +599,7 @@ class PharmacyWebApplication:
         )
 
     def status(self, session: WebConversationSession) -> dict[str, JsonValue]:
+        """Combine provider, server and current-session metadata for the status endpoint."""
         servers: list[dict[str, JsonValue]] = []
         try:
             summaries = self.manager.list_servers()
@@ -594,6 +635,7 @@ class PharmacyWebApplication:
         }
 
     def close(self) -> bool:
+        """Release close without leaking owned resources."""
         with self._close_lock:
             if self._closed:
                 return True
@@ -624,12 +666,14 @@ class PharmacyWebServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         application: PharmacyWebApplication,
     ) -> None:
+        """Attach the application and request limits to a loopback threaded server."""
         if server_address[0] != DEFAULT_WEB_HOST:
             raise ValueError("The web host must bind to 127.0.0.1.")
         self.application = application
         super().__init__(server_address, PharmacyWebRequestHandler)
 
     def get_request(self):
+        """Return request while preserving stable ordering and ownership."""
         request, client_address = super().get_request()
         request.settimeout(10.0)
         return request, client_address
@@ -644,30 +688,39 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
 
     @property
     def web_server(self) -> PharmacyWebServer:
+        """Return the typed shared server associated with this request handler."""
         return self.server  # type: ignore[return-value]
 
     def do_GET(self) -> None:
+        """Dispatch a validated loopback GET to status or static content."""
         self._dispatch("GET")
 
     def do_POST(self) -> None:
+        """Dispatch a validated same-origin POST to chat, confirm or clear."""
         self._dispatch("POST")
 
     def do_HEAD(self) -> None:
+        """Reject HEAD through the common method allow-list path."""
         self._dispatch("HEAD")
 
     def do_OPTIONS(self) -> None:
+        """Reject OPTIONS; this loopback UI does not expose cross-origin CORS."""
         self._dispatch("OPTIONS")
 
     def do_PUT(self) -> None:
+        """Reject PUT after applying common host and origin checks."""
         self._dispatch("PUT")
 
     def do_DELETE(self) -> None:
+        """Reject DELETE after applying common host and origin checks."""
         self._dispatch("DELETE")
 
     def log_message(self, format: str, *args: object) -> None:
+        """Route access diagnostics to stderr without echoing request bodies."""
         del format, args
 
     def _dispatch(self, method: str) -> None:
+        """Apply host, origin, method and body guards before route dispatch."""
         self._request_body_read_started = False
         self._request_body_consumed = False
         try:
@@ -701,6 +754,9 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
                 )
             raise WebHTTPError(HTTPStatus.NOT_FOUND, "Ruta no encontrada.")
         except WebHTTPError as exc:
+            # Early Host, Origin, media-type and length failures may occur before the
+            # POST body reader.  A single bounded drain preserves the HTTP response
+            # on Windows; explicit read state prevents consuming the frame twice.
             self._drain_rejected_post_body(method)
             self.close_connection = True
             self._send_json(
@@ -718,6 +774,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
             )
 
     def _handle_get(self, path: str) -> None:
+        """Serve the fixed asset allow-list or a session status snapshot."""
         if path == "/":
             self._session()
             self._send_static("index.html", "text/html; charset=utf-8")
@@ -735,6 +792,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, session.snapshot())
 
     def _handle_post(self, path: str) -> None:
+        """Decode one bounded JSON object and invoke the matching local action."""
         session = self._session()
         payload = self._read_json_object()
         if path == "/api/chat":
@@ -770,6 +828,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, session.clear())
 
     def _session(self) -> WebConversationSession:
+        """Resolve or create the HttpOnly-cookie session for this request."""
         candidate: str | None = None
         raw_cookie = self.headers.get("Cookie")
         if raw_cookie:
@@ -793,6 +852,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         return session
 
     def _request_path(self) -> str:
+        """Return a normalized path only when the request target has no query or fragment."""
         if len(self.path) > 2_048:
             raise WebHTTPError(
                 HTTPStatus.REQUEST_URI_TOO_LONG,
@@ -804,6 +864,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         return parsed.path
 
     def _validate_host(self) -> None:
+        """Validate host and raise a controlled error on violation."""
         host_values = self.headers.get_all("Host", [])
         if len(host_values) != 1 or not host_values[0]:
             raise WebHTTPError(HTTPStatus.BAD_REQUEST, "Falta el header Host.")
@@ -826,6 +887,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
             )
 
     def _validate_same_origin(self) -> None:
+        """Validate same origin and raise a controlled error on violation."""
         fetch_site = self.headers.get("Sec-Fetch-Site", "").casefold()
         if fetch_site in {"cross-site", "same-site"}:
             raise WebHTTPError(
@@ -850,6 +912,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
             )
 
     def _read_json_object(self) -> dict[str, JsonValue]:
+        """Read json object under the module's validation and size limits."""
         transfer_encoding = self.headers.get("Transfer-Encoding")
         if transfer_encoding:
             raise WebHTTPError(
@@ -899,6 +962,8 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 "La solicitud excede el límite permitido.",
             )
+        # Mark before touching the socket so an exception cannot trigger a second
+        # read from the central rejection handler.
         self._request_body_read_started = True
         try:
             body = self.rfile.read(length)
@@ -940,6 +1005,9 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         if not raw_length.isascii() or not raw_length.isdecimal():
             return False
         length = int(raw_length, 10)
+        # Even an attacker-declared length cannot make rejection consume more than
+        # the configured request cap.  A partial bounded drain remains marked as not
+        # consumed and the connection is closed defensively by the caller.
         drain_length = min(
             length,
             self.web_server.application.max_request_bytes,
@@ -960,6 +1028,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         payload: Mapping[str, JsonValue],
         allowed: set[str],
     ) -> None:
+        """Validate unknown keys and raise a controlled error on violation."""
         if set(payload) - allowed:
             raise WebHTTPError(
                 HTTPStatus.BAD_REQUEST,
@@ -967,6 +1036,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
             )
 
     def _send_static(self, filename: str, content_type: str) -> None:
+        """Serve one bundled allow-listed asset with immutable security headers."""
         try:
             body = (STATIC_DIRECTORY / filename).read_bytes()
         except OSError as exc:
@@ -983,6 +1053,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         *,
         allow: str | None = None,
     ) -> None:
+        """Serialize one finite JSON object and enforce the response-size boundary."""
         body = json.dumps(
             value,
             ensure_ascii=False,
@@ -1012,6 +1083,7 @@ class PharmacyWebRequestHandler(BaseHTTPRequestHandler):
         *,
         allow: str | None = None,
     ) -> None:
+        """Write status, security headers, exact length and an optional byte body."""
         self.send_response(int(status))
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -1060,6 +1132,7 @@ def build_application(
             settings = GeminiSettings.from_environ(environment)
 
             def client_factory() -> LLMClient:
+                """Create one Gemini client from the already validated local settings."""
                 return GeminiGenerateContentClient(
                     settings,
                     event_sink=lambda event_type, payload: (
@@ -1071,6 +1144,7 @@ def build_application(
             settings = AnthropicSettings.from_environ(environment)
 
             def client_factory() -> LLMClient:
+                """Create one Anthropic client from the already validated local settings."""
                 return AnthropicMessagesClient(settings)
 
         config = load_host_config(config_path, environ=environment)
@@ -1102,6 +1176,7 @@ def build_application(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from validated inputs."""
     parser = argparse.ArgumentParser(
         prog="pharmacy-mcp-web",
         description="Local loopback web interface for the Pharmacy MCP chat host.",
@@ -1135,6 +1210,7 @@ def main(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
+    """Load local configuration and serve the UI until interrupted, then close cleanly."""
     output = sys.stdout if stdout is None else stdout
     error = sys.stderr if stderr is None else stderr
     arguments = build_parser().parse_args(argv)
@@ -1179,6 +1255,7 @@ def main(
 
 
 def _confirmation_details(prompt: str) -> dict[str, str]:
+    """Derive bounded, non-authoritative display labels from a mutation prompt."""
     details = {
         "server": "servidor MCP",
         "tool": "operación mutable",
@@ -1204,6 +1281,7 @@ def _confirmation_details(prompt: str) -> dict[str, str]:
 
 
 def _safe_tool_label(value: JsonValue | None) -> str:
+    """Convert a namespaced tool identifier to a bounded display label."""
     if isinstance(value, str) and "__" in value:
         server, tool = value.split("__", 1)
         return f"{_safe_label(server, 'servidor')} · {_safe_label(tool, 'tool')}"
@@ -1211,6 +1289,7 @@ def _safe_tool_label(value: JsonValue | None) -> str:
 
 
 def _safe_label(value: object, fallback: str) -> str:
+    """Return a short printable label or a caller-supplied fallback."""
     if not isinstance(value, str):
         return fallback
     cleaned = "".join(character for character in value.strip() if character.isprintable())
@@ -1218,6 +1297,7 @@ def _safe_label(value: object, fallback: str) -> str:
 
 
 def _bounded_text(value: str, limit: int = DEFAULT_MAX_DISPLAY_TEXT_CHARS) -> str:
+    """Normalize and truncate display text without interpreting markup."""
     if len(value) <= limit:
         return value
     marker = "\n[Respuesta truncada por límite.]"
@@ -1225,10 +1305,12 @@ def _bounded_text(value: str, limit: int = DEFAULT_MAX_DISPLAY_TEXT_CHARS) -> st
 
 
 def _reject_json_constant(value: str) -> None:
+    """Validate json constant and raise a controlled error on violation."""
     raise ValueError(f"Invalid JSON constant: {value}")
 
 
 def _unique_json_object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+    """Reject duplicate JSON object keys during request decoding."""
     result: dict[str, JsonValue] = {}
     for key, value in pairs:
         if key in result:
@@ -1238,6 +1320,7 @@ def _unique_json_object(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonVal
 
 
 def _content_security_policy() -> str:
+    """Return the restrictive policy for self-hosted static assets and loopback fetches."""
     return (
         "default-src 'self'; base-uri 'none'; form-action 'self'; "
         "frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; "

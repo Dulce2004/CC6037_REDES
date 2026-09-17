@@ -1,4 +1,10 @@
-"""Configurable host for local MCP servers over stdio."""
+"""Host configurable para servidores MCP locales y remotos.
+
+El subpaquete reúne configuración estricta, clientes stdio y HTTP, registro de tools,
+políticas, logging redactado y los frontends terminal y web. El manager conserva la
+propiedad del lifecycle de cada servidor; ningún módulo debe exponer credenciales ni
+confundir herramientas con el mismo nombre de distintos servidores. Importar el
+paquete no inicia procesos ni realiza solicitudes de red."""
 
 from .anthropic import (
     ANTHROPIC_API_VERSION,

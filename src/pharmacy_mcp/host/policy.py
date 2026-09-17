@@ -1,4 +1,10 @@
-"""General host-side policies applied before an MCP tool is invoked."""
+"""Host-side repository and filesystem policies applied before MCP invocation.
+
+Canonical path checks confine Git and Filesystem calls to their configured roots and
+classify mutation conservatively from configuration or tool annotations. Arguments
+are copied before any canonical rewrite, symlink and traversal escapes are rejected,
+and logs receive only safe policy facts. The module performs local filesystem
+resolution but never invokes a tool itself."""
 
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ class RepositoryPolicyViolation(ValueError):
     """A tool invocation violated the configured repository boundary."""
 
     def __init__(self, message: str, *, event_type: str) -> None:
+        """Attach a stable audit event type to a rejected repository operation."""
         super().__init__(message)
         self.event_type = event_type
 
@@ -30,6 +37,7 @@ class FilesystemPolicyViolation(ValueError):
         event_type: str,
         path_count: int = 0,
     ) -> None:
+        """Attach a stable audit event type to a rejected filesystem operation."""
         super().__init__(message)
         self.event_type = event_type
         self.path_count = path_count
@@ -64,6 +72,8 @@ def prepare_repository_invocation(
             event_type="repository_rejected",
         )
 
+    # Reject lexical parent segments before resolution.  This makes the policy
+    # intent explicit even if the final canonical path happens to return inside.
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         raise RepositoryPolicyViolation(
@@ -87,6 +97,8 @@ def prepare_repository_invocation(
             "Repository path must identify a directory.",
             event_type="repository_rejected",
         )
+    # ``samefile`` is used where available, with normalized path comparison as the
+    # portable fallback for Windows aliases and case-insensitive filesystems.
     if not _same_path(canonical_candidate, policy.root):
         raise RepositoryPolicyViolation(
             "Repository path is outside the configured repository boundary.",
@@ -180,6 +192,7 @@ def _validate_filesystem_path(
     allow_nonexistent: bool,
     path_count: int,
 ) -> None:
+    """Validate filesystem path and raise a controlled error on violation."""
     candidate = Path(raw_path)
     if not candidate.is_absolute():
         raise FilesystemPolicyViolation(
@@ -194,6 +207,8 @@ def _validate_filesystem_path(
             path_count=path_count,
         )
 
+    # Strict resolution for reads catches missing targets and follows symlinks or
+    # junctions before the root containment decision.
     try:
         canonical_candidate = candidate.resolve(strict=not allow_nonexistent)
     except (OSError, RuntimeError) as exc:
@@ -216,6 +231,9 @@ def _validate_filesystem_path(
         )
 
     if allow_nonexistent and not candidate.exists():
+        # A write destination cannot be resolved strictly yet.  Its nearest existing
+        # ancestor must still be canonical and inside the configured root, preventing
+        # creation through an external symlink or junction.
         ancestor = candidate
         while not ancestor.exists() and ancestor != ancestor.parent:
             ancestor = ancestor.parent
@@ -246,6 +264,7 @@ def is_read_only_tool(annotations: dict[str, JsonValue] | None) -> bool:
 
 
 def _is_within(candidate: Path, root: Path) -> bool:
+    """Compare canonical paths and return whether ``candidate`` remains below ``root``."""
     candidate_text = os.path.normcase(str(candidate))
     root_text = os.path.normcase(str(root))
     try:

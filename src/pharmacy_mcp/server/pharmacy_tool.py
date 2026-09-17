@@ -1,4 +1,8 @@
-"""Adaptador MCP para la evaluación educativa de síntomas."""
+"""Adaptador MCP para la evaluación educativa de síntomas.
+
+Valida el objeto de argumentos y transforma el resultado determinista del dominio en
+texto y contenido estructurado. No consulta un modelo ni ofrece diagnóstico, y una
+entrada inválida se traduce al error JSON-RPC esperado. La función no mantiene estado."""
 
 from __future__ import annotations
 

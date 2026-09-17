@@ -1,4 +1,8 @@
-"""Núcleo del servidor MCP local implementado manualmente."""
+"""Núcleo del servidor MCP local implementado manualmente.
+
+Reexporta servidor, tools y errores para los transportes stdio y HTTP. El servidor es
+dueño del lifecycle y delega persistencia al dominio; los transportes solo enmarcan
+mensajes. Importar el paquete no abre sockets, procesos ni SQLite."""
 
 from .catalog_tools import (
     CHECK_INTERACTIONS_DESCRIPTION,

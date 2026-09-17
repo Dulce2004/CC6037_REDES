@@ -1,4 +1,10 @@
-"""Synchronous stdio MCP client backed by a local child process."""
+"""Synchronous stdio MCP client backed by one local child process.
+
+The client starts without a general shell, completes the MCP handshake and uses reader
+threads plus request IDs to correlate newline-delimited JSON-RPC responses. Stdout is
+reserved for protocol frames, stderr is diagnostic, and locks protect writes and
+pending response state. Shutdown closes stdin for EOF before bounded termination or
+kill fallbacks."""
 
 from __future__ import annotations
 
@@ -50,6 +56,7 @@ class MCPServerResponseError(MCPHostError):
         message: str,
         data: JsonValue | None = None,
     ) -> None:
+        """Capture a child server's JSON-RPC code, message and sanitized data."""
         super().__init__(f"Server '{server_name}' returned {code}: {message}")
         self.server_name = server_name
         self.code = code
@@ -66,6 +73,7 @@ class StdioMCPClient:
         *,
         protocol_logger: MCPProtocolLogger | None = None,
     ) -> None:
+        """Prepare lifecycle state, queues and locks without starting the child process."""
         if not isinstance(config, StdioServerConfig):
             raise TypeError("'config' must be a StdioServerConfig instance.")
         self.config = config
@@ -83,14 +91,17 @@ class StdioMCPClient:
 
     @property
     def is_running(self) -> bool:
+        """Return whether the owned child exists and has not exited."""
         return self._process is not None and self._process.poll() is None
 
     @property
     def is_ready(self) -> bool:
+        """Return whether the child is alive and the MCP handshake completed."""
         return self._ready and self.is_running
 
     @property
     def process_id(self) -> int | None:
+        """Expose the live child PID for diagnostics, never as an authorization token."""
         return self._process.pid if self._process is not None else None
 
     def start(self) -> None:
@@ -108,6 +119,9 @@ class StdioMCPClient:
         environment = os.environ.copy()
         environment.update(self.config.env)
         try:
+            # Arbitrary configured executables never receive shell evaluation.
+            # Windows ``npx`` compatibility is resolved earlier into a controlled
+            # ``cmd /c npx`` argv rather than widening this boundary.
             self._process = subprocess.Popen(
                 self.config.argv,
                 stdin=subprocess.PIPE,
@@ -143,6 +157,8 @@ class StdioMCPClient:
                 },
             )
             self._validate_initialize_result(result)
+            # MCP completes initialization with a notification: it has no ID and
+            # therefore must not consume a response or increment request state.
             self.notify("notifications/initialized", {})
             self._ready = True
         except Exception:
@@ -150,6 +166,7 @@ class StdioMCPClient:
             raise
 
     def list_tools(self) -> tuple[dict[str, JsonValue], ...]:
+        """Return tools while preserving stable ordering and ownership."""
         self._require_ready()
         result = self.request("tools/list", {})
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
@@ -185,6 +202,7 @@ class StdioMCPClient:
         tool_name: str,
         arguments: dict[str, JsonValue],
     ) -> JsonValue:
+        """Validate and invoke one child tool through a correlated ``tools/call``."""
         self._require_ready()
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise MCPProtocolError("Tool name must be a non-empty string.")
@@ -202,6 +220,9 @@ class StdioMCPClient:
     ) -> JsonValue:
         """Send a request and wait for its correlated response."""
 
+        # A stdio stream has no multiplexing envelope beyond JSON-RPC IDs.  Keep one
+        # request/write/read exchange under the same lock so concurrent callers
+        # cannot consume each other's response lines.
         with self._exchange_lock:
             self._require_process()
             request_id = self._next_request_id
@@ -284,13 +305,16 @@ class StdioMCPClient:
             self.protocol_logger.close()
 
     def __enter__(self) -> StdioMCPClient:
+        """Enter the stdio mcpclient lifecycle and return the active instance."""
         self.start()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        """Leave the stdio mcpclient lifecycle and release resources deterministically."""
         self.stop()
 
     def _start_reader_threads(self) -> None:
+        """Start reader threads and establish its required lifecycle state."""
         process = self._require_process()
         if process.stdout is None or process.stderr is None:
             raise MCPTransportError(
@@ -311,6 +335,7 @@ class StdioMCPClient:
         self._stderr_thread.start()
 
     def _pump_stdout(self) -> None:
+        """Move complete child stdout lines into the response queue until EOF."""
         process = self._process
         if process is None or process.stdout is None:
             self._stdout_lines.put(None)
@@ -322,6 +347,7 @@ class StdioMCPClient:
             self._stdout_lines.put(None)
 
     def _pump_stderr(self) -> None:
+        """Forward bounded child diagnostics to the protocol logger, never stdout."""
         process = self._process
         if process is None or process.stderr is None:
             return
@@ -336,6 +362,7 @@ class StdioMCPClient:
             self._stdout_lines.put(exc)
 
     def _write_payload(self, payload: str) -> None:
+        """Write and flush exactly one newline-delimited JSON-RPC payload."""
         process = self._require_process()
         if process.stdin is None or process.stdin.closed:
             raise MCPTransportError(
@@ -355,6 +382,7 @@ class StdioMCPClient:
             ) from exc
 
     def _read_response(self, request_id: int) -> Response | ErrorResponse:
+        """Read response under the module's validation and size limits."""
         deadline = time.monotonic() + self.config.request_timeout_seconds
         while True:
             remaining = deadline - time.monotonic()
@@ -394,12 +422,16 @@ class StdioMCPClient:
                     f"{exc.message}"
                 ) from exc
 
+            # Server notifications may arrive while awaiting a response.  They have
+            # no correlated result and are skipped without changing the deadline.
             if isinstance(message, Request) and message.is_notification:
                 continue
             if not isinstance(message, (Response, ErrorResponse)):
                 raise MCPProtocolError(
                     f"Server '{self.config.name}' sent an unsupported request."
                 )
+            # Returning a mismatched response would route data to the wrong caller;
+            # fail the transport instead of buffering an unexpected ID indefinitely.
             if message.id != request_id:
                 raise MCPProtocolError(
                     f"Server '{self.config.name}' response ID {message.id!r} "
@@ -408,6 +440,7 @@ class StdioMCPClient:
             return message
 
     def _validate_initialize_result(self, result: JsonValue) -> None:
+        """Validate initialize result and raise a controlled error on violation."""
         if not isinstance(result, dict):
             raise MCPProtocolError(
                 f"Server '{self.config.name}' returned invalid initialize data."
@@ -432,12 +465,14 @@ class StdioMCPClient:
         self.server_capabilities = deepcopy(capabilities)
 
     def _require_ready(self) -> None:
+        """Validate ready and raise a controlled error on violation."""
         if not self.is_ready:
             raise MCPTransportError(
                 f"Server '{self.config.name}' is not initialized."
             )
 
     def _require_process(self) -> subprocess.Popen[str]:
+        """Validate process and raise a controlled error on violation."""
         process = self._process
         if process is None:
             raise MCPTransportError(

@@ -42,7 +42,9 @@ FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem@2026.8.31"
     "git, uvx, and npx are required for the simulated chat integration",
 )
 class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
+    """Group regression checks for simulated three server chat integration behavior and boundaries."""
     def test_complete_fake_llm_workflow_is_safe_stateful_and_cleaned_up(self) -> None:
+        """Regression check: complete fake llm workflow is safe stateful and cleaned up."""
         temporary_root = Path(
             tempfile.mkdtemp(prefix=f"pharmacy-mcp-chat-{uuid4().hex}-")
         ).resolve(strict=True)
@@ -206,27 +208,34 @@ class SimulatedThreeServerChatIntegrationTests(unittest.TestCase):
 
 
 class _FakeLLM:
+    """Provide a deterministic fake llm test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.settings = AnthropicSettings(api_key="simulated", model="simulated-model")
         self.responses = list(responses)
         self.requests = []
 
     @property
     def provider_name(self):
+        """Support the controlled test scenario for provider name."""
         return "anthropic"
 
     @property
     def model_name(self):
+        """Support the controlled test scenario for model name."""
         return self.settings.model
 
     @property
     def max_tool_rounds(self):
+        """Support the controlled test scenario for max tool rounds."""
         return self.settings.max_tool_rounds
 
     def prepare_tools(self, tools):
+        """Support the controlled test scenario for prepare tools."""
         return tools_for_anthropic(tools)
 
     def create_message(self, *, messages, tools=None, system=None):
+        """Build the deterministic create message fixture used by this test module."""
         self.requests.append(
             {
                 "messages": deepcopy(messages),
@@ -238,6 +247,7 @@ class _FakeLLM:
 
 
 def _text(value: str) -> AnthropicMessage:
+    """Support the controlled test scenario for text."""
     return AnthropicMessage(
         message_id="simulated-text",
         content=({"type": "text", "text": value},),
@@ -246,6 +256,7 @@ def _text(value: str) -> AnthropicMessage:
 
 
 def _tools(*blocks) -> AnthropicMessage:
+    """Support the controlled test scenario for tools."""
     return AnthropicMessage(
         message_id="simulated-tools",
         content=tuple(blocks),
@@ -254,10 +265,12 @@ def _tools(*blocks) -> AnthropicMessage:
 
 
 def _use(identifier: str, name: str, arguments: dict[str, object]):
+    """Support the controlled test scenario for use."""
     return {"type": "tool_use", "id": identifier, "name": name, "input": arguments}
 
 
 def _pharmacy_config(database_path: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for pharmacy config."""
     return StdioServerConfig(
         name="pharmacy",
         command=sys.executable,
@@ -276,6 +289,7 @@ def _pharmacy_config(database_path: Path) -> StdioServerConfig:
 
 
 def _git_config(repository: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for git config."""
     return StdioServerConfig(
         name="git",
         command="uvx",
@@ -295,6 +309,7 @@ def _git_config(repository: Path) -> StdioServerConfig:
 
 
 def _filesystem_config(repository: Path) -> StdioServerConfig:
+    """Support the controlled test scenario for filesystem config."""
     if os.name == "nt":
         command = os.environ.get("COMSPEC", "cmd.exe")
         args = ("/d", "/s", "/c", "npx", "-y", FILESYSTEM_PACKAGE, str(repository))
@@ -326,6 +341,7 @@ def _filesystem_config(repository: Path) -> StdioServerConfig:
 
 
 def _git(repository: Path, *arguments: str) -> None:
+    """Support the controlled test scenario for git."""
     subprocess.run(
         ["git", "-C", str(repository), *arguments],
         check=True,
@@ -336,6 +352,7 @@ def _git(repository: Path, *arguments: str) -> None:
 
 
 def _remove_readonly(function: object, path: str, exception: BaseException) -> None:
+    """Support the controlled test scenario for remove readonly."""
     if not isinstance(exception, PermissionError) or not callable(function):
         raise exception
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)

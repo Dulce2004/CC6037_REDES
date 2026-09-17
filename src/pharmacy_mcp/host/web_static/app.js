@@ -1,5 +1,16 @@
 "use strict";
 
+/**
+ * Loopback-only Pharmacy MCP chat controller.
+ *
+ * The backend owns credentials, provider calls, MCP processes and conversation
+ * state. This module renders server snapshots with DOM text APIs, submits bounded
+ * user decisions, and polls only while a turn is active. It intentionally stores
+ * no session or secret in browser storage; the HttpOnly cookie is managed by fetch.
+ */
+
+// Cached nodes form the complete mutable view. Keeping the references together
+// makes render functions explicit and avoids selector-driven HTML injection.
 const elements = {
   connectionPill: document.querySelector("#connection-pill"),
   connectionError: document.querySelector("#connection-error"),
@@ -24,10 +35,19 @@ const elements = {
   acceptButton: document.querySelector("#accept-button"),
 };
 
+// Shared lifecycle state: at most one poll timeout and one pending confirmation
+// submission may exist in a tab. The backend remains the source of truth.
 let pollTimer = null;
 let currentConfirmationId = null;
 let confirmationSubmitting = false;
 
+/**
+ * Send a same-origin JSON request and return its decoded object.
+ * @param {string} path Relative backend route; absolute external URLs are not used.
+ * @param {{method?: string, body?: object}} options HTTP method and optional JSON body.
+ * @returns {Promise<object>} Parsed response payload.
+ * @throws {Error} When transport, JSON decoding, or the HTTP status fails.
+ */
 async function requestJson(path, options = {}) {
   const request = {
     method: options.method || "GET",
@@ -55,6 +75,12 @@ async function requestJson(path, options = {}) {
   return payload;
 }
 
+/**
+ * Reflect backend reachability without exposing error internals.
+ * @param {boolean} online Whether the last request completed successfully.
+ * @param {string} message Safe user-facing failure text from the backend boundary.
+ * @returns {void}
+ */
 function setConnection(online, message = "") {
   elements.connectionPill.dataset.state = online ? "online" : "error";
   elements.connectionPill.textContent = online ? "Backend local" : "Sin conexión";
@@ -64,6 +90,11 @@ function setConnection(online, message = "") {
   }
 }
 
+/**
+ * Render provider, server, and browser-session status from one backend snapshot.
+ * @param {object} payload Validated status response.
+ * @returns {void}
+ */
 function renderStatus(payload) {
   const provider = payload.provider || {};
   elements.providerName.textContent = String(provider.name || "No disponible");
@@ -101,10 +132,20 @@ function renderStatus(payload) {
   renderSession(payload.session || {});
 }
 
+/**
+ * Translate a constrained server state into a Spanish UI label.
+ * @param {string} status Sanitized server state.
+ * @returns {string} Human-readable status.
+ */
 function statusLabel(status) {
   return { ready: "listo", error: "error", stopped: "detenido" }[status] || "desconocido";
 }
 
+/**
+ * Replace the conversation view and synchronize controls with session state.
+ * @param {object} session Current isolated browser-session snapshot.
+ * @returns {void}
+ */
 function renderSession(session) {
   const messages = Array.isArray(session.messages) ? session.messages : [];
   elements.messageList.replaceChildren();
@@ -137,6 +178,11 @@ function renderSession(session) {
   }
 }
 
+/**
+ * Build one safe message element from a bounded backend message.
+ * @param {object} message Message role and display text.
+ * @returns {HTMLElement} Newly allocated article node.
+ */
 function createMessage(message) {
   const allowedRoles = new Set(["user", "assistant", "tool", "error"]);
   const role = allowedRoles.has(message.role) ? message.role : "error";
@@ -153,11 +199,18 @@ function createMessage(message) {
   label.className = "message-label";
   label.textContent = labels[role];
   const text = document.createElement("span");
+  // ``textContent`` is the DOM security boundary: model and tool text is never
+  // interpreted as HTML, even when it contains markup-like characters.
   text.textContent = typeof message.text === "string" ? message.text : "Mensaje inválido.";
   article.append(label, text);
   return article;
 }
 
+/**
+ * Show or dismiss the one-time mutation confirmation dialog.
+ * @param {?object} pending Sanitized pending confirmation, or null when absent.
+ * @returns {void}
+ */
 function showPendingConfirmation(pending) {
   if (!pending || typeof pending.id !== "string") {
     currentConfirmationId = null;
@@ -178,11 +231,19 @@ function showPendingConfirmation(pending) {
   }
 }
 
+/**
+ * Schedule exactly one short poll while backend work is active.
+ * @returns {void}
+ */
 function schedulePoll() {
   if (pollTimer !== null) return;
   pollTimer = window.setTimeout(pollConversation, 500);
 }
 
+/**
+ * Cancel the outstanding poll when a session becomes idle.
+ * @returns {void}
+ */
 function stopPolling() {
   if (pollTimer !== null) {
     window.clearTimeout(pollTimer);
@@ -190,6 +251,10 @@ function stopPolling() {
   }
 }
 
+/**
+ * Fetch the next conversation snapshot and continue bounded polling if needed.
+ * @returns {Promise<void>}
+ */
 async function pollConversation() {
   pollTimer = null;
   try {
@@ -202,6 +267,11 @@ async function pollConversation() {
   }
 }
 
+/**
+ * Submit one normalized composer value without retaining it in browser storage.
+ * @param {SubmitEvent} event Native form submission event.
+ * @returns {Promise<void>}
+ */
 async function submitMessage(event) {
   event.preventDefault();
   const message = elements.messageInput.value.trim();
@@ -225,6 +295,11 @@ async function submitMessage(event) {
   }
 }
 
+/**
+ * Resolve the current mutation prompt once; rejection is the dialog-safe default.
+ * @param {boolean} accept Whether the user explicitly authorizes this operation.
+ * @returns {Promise<void>}
+ */
 async function decideConfirmation(accept) {
   if (confirmationSubmitting || currentConfirmationId === null) return;
   confirmationSubmitting = true;
@@ -251,6 +326,10 @@ async function decideConfirmation(accept) {
   }
 }
 
+/**
+ * Clear only this browser session's in-memory conversation.
+ * @returns {Promise<void>}
+ */
 async function clearConversation() {
   elements.clearButton.disabled = true;
   try {
@@ -265,10 +344,18 @@ async function clearConversation() {
   }
 }
 
+/**
+ * Update the visible input count from the textarea's bounded value.
+ * @returns {void}
+ */
 function updateCharacterCount() {
   elements.characterCount.textContent = `${elements.messageInput.value.length} / 8000`;
 }
 
+/**
+ * Load the initial status once and place keyboard focus in the composer.
+ * @returns {Promise<void>}
+ */
 async function initialize() {
   try {
     const status = await requestJson("/api/status");
@@ -285,6 +372,8 @@ async function initialize() {
   }
 }
 
+// Keyboard and dialog listeners preserve native form semantics. Escape/cancel maps
+// to explicit rejection; no listener can authorize a mutation implicitly.
 elements.composer.addEventListener("submit", submitMessage);
 elements.messageInput.addEventListener("input", updateCharacterCount);
 elements.messageInput.addEventListener("keydown", (event) => {

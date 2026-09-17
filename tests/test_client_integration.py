@@ -15,7 +15,9 @@ from pharmacy_mcp.server import PharmacyMCPServer  # noqa: E402
 
 
 class ClientEndToEndTests(unittest.TestCase):
+    """Group regression checks for client end to end behavior and boundaries."""
     def test_initialize_list_and_assess_end_to_end(self) -> None:
+        """Regression check: initialize list and assess end to end."""
         client = PharmacyMCPClient(PharmacyMCPServer())
 
         initialization = client.initialize()
@@ -36,6 +38,7 @@ class ClientEndToEndTests(unittest.TestCase):
         self.assertIn("Category: respiratory", result["content"][0]["text"])
 
     def test_invalid_assessment_error_end_to_end(self) -> None:
+        """Regression check: invalid assessment error end to end."""
         client = PharmacyMCPClient(PharmacyMCPServer())
         client.initialize()
 
@@ -49,6 +52,7 @@ class ClientEndToEndTests(unittest.TestCase):
         self.assertEqual(result.message, "'age' must be an integer.")
 
     def test_interaction_check_end_to_end(self) -> None:
+        """Regression check: interaction check end to end."""
         client = PharmacyMCPClient(PharmacyMCPServer())
         client.initialize()
 

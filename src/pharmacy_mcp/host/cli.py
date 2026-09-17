@@ -1,4 +1,9 @@
-"""Technical CLI for the configurable terminal MCP host."""
+"""Technical CLI for the configurable terminal MCP host.
+
+The parser exposes server discovery, tool invocation and interactive chat while the
+manager retains process and policy ownership. Machine-readable results use stdout;
+diagnostics and optional protocol visualization use stderr. Every command closes its
+logger and any child process even after controlled failures."""
 
 from __future__ import annotations
 
@@ -33,6 +38,7 @@ from .stdio_client import MCPHostError
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build parser from validated inputs."""
     parser = argparse.ArgumentParser(
         prog="pharmacy-mcp-host",
         description=(
@@ -121,6 +127,7 @@ def main(
     gemini_sleep: Sleep | None = None,
     confirmation: Confirmation | None = None,
 ) -> int:
+    """Parse local CLI arguments, dispatch one mode and convert expected errors to exits."""
     output_stream = stdout if stdout is not None else sys.stdout
     error_stream = stderr if stderr is not None else sys.stderr
     input_stream = stdin if stdin is not None else sys.stdin
@@ -269,6 +276,7 @@ def _run_chat(
     stdout: TextIO,
     stderr: TextIO,
 ) -> int:
+    """Run the interactive bounded chat loop until EOF or an explicit quit command."""
     ready_servers = [
         item.name for item in manager.list_servers() if item.status == "ready"
     ]
@@ -352,12 +360,14 @@ def _run_chat(
 
 
 def _read_line(stdin: TextIO, stdout: TextIO, prompt: str) -> str:
+    """Read line under the module's validation and size limits."""
     stdout.write(prompt)
     stdout.flush()
     return stdin.readline()
 
 
 def _parse_tool_arguments(payload: str) -> dict[str, JsonValue]:
+    """Parse tool arguments into the module's validated representation."""
     try:
         value = json.loads(payload, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError) as exc:
@@ -368,10 +378,12 @@ def _parse_tool_arguments(payload: str) -> dict[str, JsonValue]:
 
 
 def _reject_json_constant(value: str) -> None:
+    """Validate json constant and raise a controlled error on violation."""
     raise ValueError(f"Invalid JSON numeric constant: {value}")
 
 
 def _write_json(stream: TextIO, value: JsonValue) -> None:
+    """Print one finite JSON value to the CLI output stream."""
     stream.write(
         json.dumps(
             value,

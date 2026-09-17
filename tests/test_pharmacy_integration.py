@@ -22,7 +22,9 @@ from pharmacy_mcp.server import (  # noqa: E402
 
 
 class PharmacyToolIntegrationTests(unittest.TestCase):
+    """Group regression checks for pharmacy tool integration behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.server = PharmacyMCPServer()
         initialization = self.server.process_request(
             Request(
@@ -50,6 +52,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         arguments: dict[str, object],
         request_id: int = 1,
     ) -> Response | ErrorResponse:
+        """Support the controlled test scenario for call tool."""
         response = self.server.process_request(
             Request(
                 method="tools/call",
@@ -61,9 +64,11 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         return response
 
     def response_text(self, response: Response) -> str:
+        """Support the controlled test scenario for response text."""
         return response.result["content"][0]["text"]
 
     def test_tools_list_publishes_assessment_and_not_classifier(self) -> None:
+        """Regression check: tools list publishes assessment and not classifier."""
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -74,6 +79,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertNotIn("classify_symptoms", names)
 
     def test_assess_symptoms_accepts_natural_language(self) -> None:
+        """Regression check: assess symptoms accepts natural language."""
         response = self.call_tool(
             "assess_symptoms",
             {
@@ -90,6 +96,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("not a diagnosis", self.response_text(response))
 
     def test_assess_symptoms_prioritizes_urgent_red_flag(self) -> None:
+        """Regression check: assess symptoms prioritizes urgent red flag."""
         response = self.call_tool(
             "assess_symptoms",
             {
@@ -107,6 +114,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("Do not use this result", self.response_text(response))
 
     def test_assess_symptoms_rejects_invalid_arguments(self) -> None:
+        """Regression check: assess symptoms rejects invalid arguments."""
         cases = (
             {},
             {"symptoms": ["fever"]},
@@ -127,6 +135,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
                 self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_removed_classifier_name_is_not_callable(self) -> None:
+        """Regression check: removed classifier name is not callable."""
         response = self.call_tool(
             "classify_symptoms",
             {"symptoms": ["fever", "cough"]},
@@ -137,6 +146,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("Tool not found", response.error.message)
 
     def test_check_interactions_reports_medication_and_allergy_alerts(self) -> None:
+        """Regression check: check interactions reports medication and allergy alerts."""
         response = self.call_tool(
             "check_interactions",
             {
@@ -155,6 +165,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("does not guarantee safety", self.response_text(response))
 
     def test_check_interactions_never_declares_no_findings_safe(self) -> None:
+        """Regression check: check interactions never declares no findings safe."""
         response = self.call_tool(
             "check_interactions",
             {
@@ -171,6 +182,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("does not establish", self.response_text(response))
 
     def test_check_interactions_does_not_recommend_prescription_item(self) -> None:
+        """Regression check: check interactions does not recommend prescription item."""
         response = self.call_tool(
             "check_interactions",
             {"medication_sku": "MED-RX-001"},
@@ -181,6 +193,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
         self.assertIn("does not recommend", self.response_text(response))
 
     def test_check_interactions_returns_unknown_skus_as_tool_errors(self) -> None:
+        """Regression check: check interactions returns unknown skus as tool errors."""
         cases = (
             {"medication_sku": "MED-MISSING"},
             {
@@ -207,6 +220,7 @@ class PharmacyToolIntegrationTests(unittest.TestCase):
                 self.assertIn("not exhaustive", self.response_text(response))
 
     def test_check_interactions_rejects_malformed_arguments(self) -> None:
+        """Regression check: check interactions rejects malformed arguments."""
         cases = (
             {},
             {"medication_sku": "bad sku"},

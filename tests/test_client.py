@@ -27,12 +27,14 @@ class RecordingServer(PharmacyMCPServer):
     """Servidor real que conserva los IDs recibidos para una prueba."""
 
     def __init__(self) -> None:
+        """Support the controlled test scenario for init."""
         super().__init__()
         self.received_ids: list[object] = []
 
     def process_request(
         self, request: Request
     ) -> Response | ErrorResponse | None:
+        """Support the controlled test scenario for process request."""
         self.received_ids.append(request.to_dict().get("id"))
         return super().process_request(request)
 
@@ -43,6 +45,7 @@ class RespondingNotificationServer(PharmacyMCPServer):
     def process_request(
         self, request: Request
     ) -> Response | ErrorResponse | None:
+        """Support the controlled test scenario for process request."""
         response = super().process_request(request)
         if request.is_notification:
             return Response(result={}, id=None)
@@ -50,24 +53,30 @@ class RespondingNotificationServer(PharmacyMCPServer):
 
 
 class PharmacyMCPClientTests(unittest.TestCase):
+    """Group regression checks for pharmacy mcpclient behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.server = PharmacyMCPServer()
         self.client = PharmacyMCPClient(self.server)
 
     def initialize_client(self) -> None:
+        """Support the controlled test scenario for initialize client."""
         response = self.client.initialize()
         self.assertIsInstance(response, Response)
 
     def assess(self, symptoms: object) -> object:
+        """Support the controlled test scenario for assess."""
         return self.client.call_tool(
             "assess_symptoms",
             {"symptoms": symptoms},
         )
 
     def result_text(self, result: object) -> str:
+        """Support the controlled test scenario for result text."""
         return result["content"][0]["text"]
 
     def test_client_can_initialize(self) -> None:
+        """Regression check: client can initialize."""
         response = self.client.initialize()
 
         self.assertIsInstance(response, Response)
@@ -76,6 +85,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.READY)
 
     def test_client_lists_server_tools(self) -> None:
+        """Regression check: client lists server tools."""
         self.initialize_client()
 
         tools = self.client.list_tools()
@@ -86,6 +96,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertNotIn("classify_symptoms", names)
 
     def test_client_invokes_assess_symptoms(self) -> None:
+        """Regression check: client invokes assess symptoms."""
         self.initialize_client()
 
         result = self.assess("Tengo fiebre y tos")
@@ -94,6 +105,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("Severity:", self.result_text(result))
 
     def test_client_receives_respiratory_assessment(self) -> None:
+        """Regression check: client receives respiratory assessment."""
         self.initialize_client()
 
         result = self.assess("Tengo fiebre, tos y dolor de garganta")
@@ -101,6 +113,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("Category: respiratory", self.result_text(result))
 
     def test_client_receives_allergy_assessment(self) -> None:
+        """Regression check: client receives allergy assessment."""
         self.initialize_client()
 
         result = self.assess(
@@ -110,6 +123,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("Category: allergy", self.result_text(result))
 
     def test_client_receives_gastrointestinal_assessment(self) -> None:
+        """Regression check: client receives gastrointestinal assessment."""
         self.initialize_client()
 
         result = self.assess("Tengo náuseas, diarrea y dolor abdominal")
@@ -117,6 +131,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("Category: gastrointestinal", self.result_text(result))
 
     def test_client_receives_unclassified_result(self) -> None:
+        """Regression check: client receives unclassified result."""
         self.initialize_client()
 
         result = self.assess("Tengo fiebre y picazón en los ojos")
@@ -124,6 +139,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("Category: unclassified", self.result_text(result))
 
     def test_client_handles_invalid_assessment_arguments(self) -> None:
+        """Regression check: client handles invalid assessment arguments."""
         self.initialize_client()
 
         result = self.assess(["fever"])
@@ -133,12 +149,14 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertIn("non-empty string", result.message)
 
     def test_tool_cannot_run_before_initialize(self) -> None:
+        """Regression check: tool cannot run before initialize."""
         result = self.assess("Tengo fiebre y tos")
 
         self.assertIsInstance(result, ClientError)
         self.assertEqual(result.message, "Client has not been initialized.")
 
     def test_request_ids_increment_deterministically(self) -> None:
+        """Regression check: request ids increment deterministically."""
         server = RecordingServer()
         client = PharmacyMCPClient(server)
 
@@ -149,6 +167,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertEqual(server.received_ids, [1, None, 2, 3])
 
     def test_initialized_notification_does_not_consume_request_id(self) -> None:
+        """Regression check: initialized notification does not consume request id."""
         server = RecordingServer()
         client = PharmacyMCPClient(server)
 
@@ -160,6 +179,7 @@ class PharmacyMCPClientTests(unittest.TestCase):
         self.assertEqual(server.received_ids, [1, None, 2])
 
     def test_client_rejects_a_response_to_its_notification(self) -> None:
+        """Regression check: client rejects a response to its notification."""
         client = PharmacyMCPClient(RespondingNotificationServer())
 
         result = client.initialize()

@@ -32,7 +32,9 @@ from pharmacy_mcp.server.http import (  # noqa: E402
 
 
 class HTTPMCPClientLoopbackTests(unittest.TestCase):
+    """Group regression checks for httpmcpclient loopback behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime = PROJECT_DIRECTORY / "runtime"
         runtime.mkdir(exist_ok=True)
         unique = uuid4().hex
@@ -71,6 +73,7 @@ class HTTPMCPClientLoopbackTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        """Release every process, socket, file, and fixture owned by the test."""
         try:
             if self.client.is_running:
                 self.client.stop()
@@ -85,6 +88,7 @@ class HTTPMCPClientLoopbackTests(unittest.TestCase):
                 Path(f"{self.database_path}{suffix}").unlink(missing_ok=True)
 
     def test_real_handshake_tool_call_logging_and_delete(self) -> None:
+        """Regression check: real handshake tool call logging and delete."""
         self.client.start()
         self.assertTrue(self.client.is_ready)
         self.assertIsNone(self.client.process_id)
@@ -104,6 +108,7 @@ class HTTPMCPClientLoopbackTests(unittest.TestCase):
         self.assertNotIn(self.token, log_text)
 
     def test_reproducible_two_session_loopback_demonstration(self) -> None:
+        """Regression check: reproducible two session loopback demonstration."""
         second = HTTPMCPClient(
             self.client.config,
             protocol_logger=self.logger,
@@ -133,7 +138,9 @@ class HTTPMCPClientLoopbackTests(unittest.TestCase):
 
 
 class HTTPMCPClientProtocolTests(unittest.TestCase):
+    """Group regression checks for httpmcpclient protocol behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime = PROJECT_DIRECTORY / "runtime"
         runtime.mkdir(exist_ok=True)
         self.log_path = runtime / f"http-protocol-{uuid4().hex}.jsonl"
@@ -143,6 +150,7 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        """Release every process, socket, file, and fixture owned by the test."""
         self.logger.close()
         self.log_path.unlink(missing_ok=True)
 
@@ -152,6 +160,7 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         maximum: int = 4_096,
         request_maximum: int = 4_096,
     ) -> HTTPServerConfig:
+        """Support the controlled test scenario for config."""
         return HTTPServerConfig(
             name="pharmacy-remote",
             url="https://pharmacy.example.test/mcp",
@@ -168,6 +177,7 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         session_id: str = "session-secret-value",
         body_truncated: bool = False,
     ) -> MCPHTTPResponse:
+        """Support the controlled test scenario for initialize response."""
         body = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -189,9 +199,11 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         )
 
     def test_headers_ids_and_repr_do_not_disclose_credentials_or_session(self) -> None:
+        """Regression check: headers ids and repr do not disclose credentials or session."""
         requests: list[MCPHTTPRequest] = []
 
         def transport(request: MCPHTTPRequest) -> MCPHTTPResponse:
+            """Support the controlled test scenario for transport."""
             requests.append(request)
             if len(requests) == 1:
                 return self.initialize_response()
@@ -223,6 +235,7 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         self.assertNotIn("session-secret-value", log_text)
 
     def test_sse_and_oversized_responses_fail_explicitly(self) -> None:
+        """Regression check: sse and oversized responses fail explicitly."""
         for response, error_type, fragment in (
             (
                 self.initialize_response(content_type="text/event-stream"),
@@ -255,7 +268,9 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
             client.start()
 
     def test_timeout_and_safe_http_status_errors_are_reported_without_body(self) -> None:
+        """Regression check: timeout and safe http status errors are reported without body."""
         def timeout(request: MCPHTTPRequest) -> MCPHTTPResponse:
+            """Support the controlled test scenario for timeout."""
             raise socket.timeout("transport-secret should stay hidden")
 
         client = HTTPMCPClient(
@@ -284,9 +299,11 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
                 self.assertNotIn("sensitive remote body", str(caught.exception))
 
     def test_outbound_request_body_is_bounded_without_transport_call(self) -> None:
+        """Regression check: outbound request body is bounded without transport call."""
         requests: list[MCPHTTPRequest] = []
 
         def transport(request: MCPHTTPRequest) -> MCPHTTPResponse:
+            """Support the controlled test scenario for transport."""
             requests.append(request)
             if len(requests) == 1:
                 return self.initialize_response()
@@ -306,9 +323,11 @@ class HTTPMCPClientProtocolTests(unittest.TestCase):
         client.stop()
 
     def test_mutable_call_is_never_retried_after_http_failure(self) -> None:
+        """Regression check: mutable call is never retried after http failure."""
         requests: list[MCPHTTPRequest] = []
 
         def transport(request: MCPHTTPRequest) -> MCPHTTPResponse:
+            """Support the controlled test scenario for transport."""
             requests.append(request)
             if len(requests) == 1:
                 return self.initialize_response()

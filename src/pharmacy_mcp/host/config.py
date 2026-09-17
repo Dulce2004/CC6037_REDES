@@ -1,4 +1,10 @@
-"""Strict loader for stdio and Streamable HTTP MCP host configuration."""
+"""Strict loader for stdio and Streamable HTTP MCP host configuration.
+
+JSON is decoded with duplicate/constant checks, only declared environment variables
+are substituted, and paths, URLs, timeouts and policies are canonicalized before a
+server can start. Immutable dataclasses keep the validated configuration. Reading a
+configuration file is the module's only I/O; it never starts processes or contacts an
+endpoint."""
 
 from __future__ import annotations
 
@@ -73,6 +79,7 @@ class RepositoryPolicyConfig:
     mutable_tools: frozenset[str]
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed repository policy config invariants."""
         if not isinstance(self.root, Path) or not self.root.is_absolute():
             raise HostConfigurationError(
                 "Repository policy 'root' must resolve to an absolute path."
@@ -119,6 +126,7 @@ class FilesystemPolicyConfig:
     creation_arguments: Mapping[str, frozenset[str]]
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed filesystem policy config invariants."""
         if not isinstance(self.root, Path) or not self.root.is_absolute():
             raise HostConfigurationError(
                 "Filesystem policy 'root' must resolve to an absolute path."
@@ -199,6 +207,7 @@ class StdioServerConfig:
     filesystem_policy: FilesystemPolicyConfig | None = None
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed stdio server config invariants."""
         if (
             not isinstance(self.name, str)
             or not _SERVER_NAME_PATTERN.fullmatch(self.name)
@@ -252,6 +261,7 @@ class StdioServerConfig:
 
     @property
     def argv(self) -> tuple[str, ...]:
+        """Return the immutable executable-plus-arguments vector for ``shell=False``."""
         return (self.command, *self.args)
 
 
@@ -271,6 +281,7 @@ class HTTPServerConfig:
     mutable_tools: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed httpserver config invariants."""
         if (
             not isinstance(self.name, str)
             or not _SERVER_NAME_PATTERN.fullmatch(self.name)
@@ -335,6 +346,7 @@ class HostConfig:
     variables: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed host config invariants."""
         if not isinstance(self.servers, tuple) or not self.servers:
             raise HostConfigurationError(
                 "Host configuration must contain at least one server."
@@ -427,6 +439,7 @@ def _parse_server(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
 ) -> ServerConfig:
+    """Parse server into the module's validated representation."""
     label = f"servers[{index}]"
     if not isinstance(value, dict) or not all(
         isinstance(key, str) for key in value
@@ -459,6 +472,7 @@ def _parse_stdio_server(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
 ) -> StdioServerConfig:
+    """Parse stdio server into the module's validated representation."""
     unexpected = sorted(set(value) - _STDIO_SERVER_KEYS)
     if unexpected:
         raise HostConfigurationError(
@@ -566,6 +580,7 @@ def _parse_http_server(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
 ) -> HTTPServerConfig:
+    """Parse http server into the module's validated representation."""
     unexpected = sorted(set(value) - _HTTP_SERVER_KEYS)
     if unexpected:
         raise HostConfigurationError(
@@ -644,6 +659,7 @@ def _parse_repository_policy(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
 ) -> RepositoryPolicyConfig | None:
+    """Parse repository policy into the module's validated representation."""
     if value is None:
         return None
     if not isinstance(value, dict) or not all(
@@ -720,6 +736,7 @@ def _parse_filesystem_policy(
     declared_variables: tuple[str, ...],
     environ: Mapping[str, str],
 ) -> FilesystemPolicyConfig | None:
+    """Parse filesystem policy into the module's validated representation."""
     if value is None:
         return None
     if not isinstance(value, dict) or not all(
@@ -826,6 +843,7 @@ def _reject_unsafe_filesystem_root(root: Path) -> None:
 
 
 def _same_config_path(first: Path, second: Path) -> bool:
+    """Compare paths using Windows-aware spelling and filesystem identity when possible."""
     if os.path.normcase(str(first)) == os.path.normcase(str(second)):
         return True
     try:
@@ -842,7 +860,9 @@ def _substitute_variables(
     *,
     allow_missing: bool = False,
 ) -> str:
+    """Expand only allow-listed ``${NAME}`` references from the supplied environment."""
     def replace(match: re.Match[str]) -> str:
+        """Resolve one declared reference or reject missing and undeclared names."""
         variable_name = match.group(1)
         if variable_name not in declared_variables:
             raise HostConfigurationError(
@@ -866,6 +886,7 @@ def _substitute_variables(
 
 
 def _validate_http_server_url(value: str) -> str:
+    """Validate http server url and raise a controlled error on violation."""
     if (
         not value.strip()
         or len(value) > 2_048
@@ -901,6 +922,7 @@ def _validate_http_server_url(value: str) -> str:
 
 
 def _is_loopback_url_host(host: str) -> bool:
+    """Recognize canonical localhost and loopback IP URL hosts."""
     if host.casefold() == "localhost":
         return True
     try:
@@ -915,12 +937,14 @@ def _optional_timeout(
     default: float,
     label: str,
 ) -> float:
+    """Read and validate a finite positive timeout from one configuration object."""
     timeout = value.get(field_name, default)
     _validate_timeout(timeout, f"{label}.{field_name}")
     return float(timeout)
 
 
 def _validate_timeout(value: object, field_name: str) -> None:
+    """Validate timeout and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -934,6 +958,7 @@ def _validate_timeout(value: object, field_name: str) -> None:
 
 
 def _validate_body_limit(value: object, field_name: str) -> None:
+    """Validate body limit and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -946,6 +971,7 @@ def _validate_body_limit(value: object, field_name: str) -> None:
 
 
 def _reject_json_constant(value: str) -> None:
+    """Validate json constant and raise a controlled error on violation."""
     raise HostConfigurationError(
         f"Host configuration contains invalid JSON numeric constant: {value}."
     )

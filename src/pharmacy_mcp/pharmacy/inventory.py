@@ -1,4 +1,9 @@
-"""Inventario inicial, validado y de solo lectura por sucursal."""
+"""Inventario inicial validado y de solo lectura por sucursal.
+
+El repositorio exige exactamente una cantidad entera no negativa por combinación de
+sucursal y SKU del catálogo. Sus consultas devuelven tuplas estables y no exponen
+operaciones de modificación; las órdenes usan el almacén SQLite separado. Solo la
+carga inicial lee ``inventory.json``."""
 
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ class InventoryRepository:
         catalog: PharmacyCatalog,
         records: Iterable[InventoryRecord],
     ) -> None:
+        """Validate complete branch/SKU coverage and index immutable stock records."""
         if not isinstance(catalog, PharmacyCatalog):
             raise InventoryValidationError(
                 "'catalog' must be a PharmacyCatalog instance."
@@ -126,13 +132,16 @@ class InventoryRepository:
         )
 
     def list_records(self) -> tuple[InventoryRecord, ...]:
+        """Return records while preserving stable ordering and ownership."""
         return tuple(self._records.values())
 
     def _validate_branch(self, branch_id: str) -> None:
+        """Validate branch and raise a controlled error on violation."""
         if self._catalog.get_branch(branch_id) is None:
             raise InventoryLookupError(f"Unknown branch: '{branch_id}'.")
 
     def _validate_sku(self, sku: str) -> None:
+        """Validate sku and raise a controlled error on violation."""
         if self._catalog.get_medication(sku) is None:
             raise InventoryLookupError(f"Unknown medication SKU: '{sku}'.")
 
@@ -150,6 +159,7 @@ def load_default_inventory(
 
 
 def _read_inventory_array(path: Path) -> list[object]:
+    """Read inventory array under the module's validation and size limits."""
     try:
         raw_data = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -173,6 +183,7 @@ def _read_inventory_array(path: Path) -> list[object]:
 
 
 def _parse_inventory_record(value: object) -> InventoryRecord:
+    """Parse inventory record into the module's validated representation."""
     if not isinstance(value, dict) or set(value) != {
         "branch_id",
         "sku",

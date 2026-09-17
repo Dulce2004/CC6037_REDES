@@ -1,4 +1,9 @@
-"""Modelos inmutables para el catálogo y las órdenes simuladas."""
+"""Modelos inmutables para catálogo, inventario y órdenes simuladas.
+
+Los dataclasses validan texto, cantidades y referencias en el borde del dominio.
+``Money`` conserva centavos enteros para evitar redondeos de ``float`` y las líneas de
+orden capturan el precio usado al crearse. Construir modelos no realiza E/S ni modifica
+repositorios."""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ _SKU_FORMAT = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
 
 
 def _validate_text(value: object, field_name: str) -> None:
+    """Validate text and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"'{field_name}' must be a non-empty string.")
     if value != value.strip():
@@ -17,6 +23,7 @@ def _validate_text(value: object, field_name: str) -> None:
 
 
 def _validate_text_tuple(values: object, field_name: str) -> None:
+    """Validate text tuple and raise a controlled error on violation."""
     if not isinstance(values, tuple):
         raise ValueError(f"'{field_name}' must be a tuple of strings.")
     if not values:
@@ -39,6 +46,7 @@ class Money:
     currency: str = CATALOG_CURRENCY
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed money invariants."""
         if isinstance(self.amount_centavos, bool) or not isinstance(
             self.amount_centavos, int
         ):
@@ -56,6 +64,7 @@ class Money:
         return f"{quetzales}.{centavos:02d}"
 
     def to_dict(self) -> dict[str, str]:
+        """Return a JSON-compatible copy of this money value."""
         return {"amount": self.amount, "currency": self.currency}
 
 
@@ -67,6 +76,7 @@ class Branch:
     name: str
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed branch invariants."""
         _validate_text(self.branch_id, "branch_id")
         _validate_text(self.name, "name")
 
@@ -86,6 +96,7 @@ class Medication:
     price: Money
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed medication invariants."""
         _validate_text(self.sku, "sku")
         if not _SKU_FORMAT.fullmatch(self.sku):
             raise ValueError("'sku' must use uppercase letters, numbers, and hyphens.")
@@ -117,6 +128,7 @@ class InventoryRecord:
     quantity: int
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed inventory record invariants."""
         _validate_text(self.branch_id, "branch_id")
         _validate_text(self.sku, "sku")
         if not _SKU_FORMAT.fullmatch(self.sku):
@@ -135,6 +147,7 @@ class OrderItemRequest:
     quantity: int
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed order item request invariants."""
         _validate_text(self.sku, "sku")
         if not _SKU_FORMAT.fullmatch(self.sku):
             raise ValueError("'sku' must use uppercase letters, numbers, and hyphens.")
@@ -153,6 +166,7 @@ class OrderLine:
     unit_price_centavos: int
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed order line invariants."""
         OrderItemRequest(sku=self.sku, quantity=self.quantity)
         if isinstance(self.unit_price_centavos, bool) or not isinstance(
             self.unit_price_centavos, int
@@ -163,6 +177,7 @@ class OrderLine:
 
     @property
     def line_total_centavos(self) -> int:
+        """Return the exact integer-centavo subtotal for this immutable order line."""
         return self.quantity * self.unit_price_centavos
 
 
@@ -179,6 +194,7 @@ class OrderRecord:
     created_at: str
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed order record invariants."""
         _validate_text(self.order_id, "order_id")
         _validate_text(self.branch_id, "branch_id")
         _validate_text(self.status, "status")
@@ -198,4 +214,5 @@ class OrderRecord:
 
     @property
     def total_centavos(self) -> int:
+        """Return the exact sum of every immutable order-line subtotal."""
         return sum(item.line_total_centavos for item in self.items)

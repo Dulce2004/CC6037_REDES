@@ -18,7 +18,9 @@ from pharmacy_mcp.host.cli import build_parser, main  # noqa: E402
 
 
 class MCPHostCliTests(unittest.TestCase):
+    """Group regression checks for mcphost cli behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         unique = uuid4().hex
@@ -59,6 +61,7 @@ class MCPHostCliTests(unittest.TestCase):
         *arguments: str,
         show_log: bool = False,
     ) -> tuple[int, dict[str, object], str]:
+        """Support the controlled test scenario for run cli."""
         stdout = io.StringIO()
         stderr = io.StringIO()
         host_arguments = [
@@ -79,6 +82,7 @@ class MCPHostCliTests(unittest.TestCase):
         return exit_code, parsed_output, stderr.getvalue()
 
     def test_list_servers_does_not_start_processes(self) -> None:
+        """Regression check: list servers does not start processes."""
         exit_code, output, diagnostics = self.run_cli("list-servers")
 
         self.assertEqual(exit_code, 0)
@@ -99,6 +103,7 @@ class MCPHostCliTests(unittest.TestCase):
         )
 
     def test_list_tools_outputs_namespaced_registry_and_protocol_log(self) -> None:
+        """Regression check: list tools outputs namespaced registry and protocol log."""
         exit_code, output, diagnostics = self.run_cli(
             "list-tools",
             show_log=True,
@@ -124,6 +129,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertIn('"method":"tools/list"', diagnostics)
 
     def test_call_tool_invokes_namespaced_tool_with_json_arguments(self) -> None:
+        """Regression check: call tool invokes namespaced tool with json arguments."""
         exit_code, output, diagnostics = self.run_cli(
             "call-tool",
             "pharmacy__check_stock",
@@ -141,6 +147,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertIn('"name":"check_stock"', diagnostics)
 
     def test_invalid_argument_json_fails_without_starting_server(self) -> None:
+        """Regression check: invalid argument json fails without starting server."""
         exit_code, output, diagnostics = self.run_cli(
             "call-tool",
             "pharmacy__check_stock",
@@ -156,6 +163,7 @@ class MCPHostCliTests(unittest.TestCase):
     def test_previous_dotted_namespace_is_rejected_without_protocol_traffic(
         self,
     ) -> None:
+        """Regression check: previous dotted namespace is rejected without protocol traffic."""
         exit_code, output, diagnostics = self.run_cli(
             "call-tool",
             "pharmacy.check_stock",
@@ -168,6 +176,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertNotIn("[MCP log]", diagnostics)
 
     def test_unknown_namespaced_tool_is_reported_after_clean_shutdown(self) -> None:
+        """Regression check: unknown namespaced tool is reported after clean shutdown."""
         exit_code, output, diagnostics = self.run_cli(
             "call-tool",
             "pharmacy__unknown",
@@ -178,6 +187,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertIn("not registered", diagnostics)
 
     def test_allow_mutation_is_an_explicit_global_option(self) -> None:
+        """Regression check: allow mutation is an explicit global option."""
         arguments = build_parser().parse_args(
             [
                 "--allow-mutation",
@@ -189,6 +199,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertTrue(arguments.allow_mutation)
 
     def test_cli_forwards_explicit_mutation_authorization_to_manager(self) -> None:
+        """Regression check: cli forwards explicit mutation authorization to manager."""
         stdout = io.StringIO()
         stderr = io.StringIO()
         with patch("pharmacy_mcp.host.cli.MCPServerManager") as manager_class:
@@ -223,6 +234,7 @@ class MCPHostCliTests(unittest.TestCase):
         manager.stop_all.assert_called_once_with()
 
     def test_jsonl_records_complete_handshake_and_tool_call(self) -> None:
+        """Regression check: jsonl records complete handshake and tool call."""
         exit_code, output, diagnostics = self.run_cli(
             "call-tool",
             "pharmacy__check_stock",
@@ -283,6 +295,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertTrue(all(entry["transport"] == "stdio" for entry in entries))
 
     def test_log_open_failure_returns_nonzero_without_protocol_traffic(self) -> None:
+        """Regression check: log open failure returns nonzero without protocol traffic."""
         stdout = io.StringIO()
         stderr = io.StringIO()
 
@@ -304,6 +317,7 @@ class MCPHostCliTests(unittest.TestCase):
         self.assertNotIn("[MCP log]", stderr.getvalue())
 
     def _remove_runtime_files(self) -> None:
+        """Support the controlled test scenario for remove runtime files."""
         self.config_path.unlink(missing_ok=True)
         self.log_path.unlink(missing_ok=True)
         for suffix in ("", "-shm", "-wal"):

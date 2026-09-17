@@ -1,4 +1,9 @@
-"""Repositorio inmutable de interacciones y alergias simuladas."""
+"""Repositorio inmutable de interacciones y alergias simuladas.
+
+Las reglas se validan contra el catálogo, se normalizan sin perder los valores
+originales y producen únicamente alertas presentes en el dataset controlado. Una
+respuesta vacía no afirma seguridad clínica. La carga lee un JSON local; las consultas
+son puras, ordenadas y no modifican medicamentos ni inventario."""
 
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ class MedicationInteractionRule:
     message: str
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed medication interaction rule invariants."""
         if len(self.skus) != 2 or self.skus[0] == self.skus[1]:
             raise InteractionValidationError(
                 "An interaction rule must contain two different SKUs."
@@ -65,6 +71,7 @@ class AllergyRule:
     terms: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed allergy rule invariants."""
         if _SKU_FORMAT.fullmatch(self.sku) is None:
             raise InteractionValidationError(
                 "Allergy-rule SKUs must use uppercase letters, numbers, and hyphens."
@@ -95,6 +102,7 @@ class InteractionAlert:
     allergy: str | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible copy of this interaction alert value."""
         result: dict[str, object] = {
             "type": self.alert_type,
             "severity": self.severity,
@@ -117,6 +125,7 @@ class InteractionRepository:
         medication_rules: Iterable[MedicationInteractionRule],
         allergy_rules: Iterable[AllergyRule],
     ) -> None:
+        """Validate controlled interaction/allergy rules against the medication catalog."""
         if not isinstance(catalog, PharmacyCatalog):
             raise InteractionValidationError(
                 "'catalog' must be a PharmacyCatalog instance."
@@ -258,12 +267,15 @@ class InteractionRepository:
         return tuple(alerts)
 
     def list_medication_rules(self) -> tuple[MedicationInteractionRule, ...]:
+        """Return medication rules while preserving stable ordering and ownership."""
         return tuple(self._medication_rules.values())
 
     def list_allergy_rules(self) -> tuple[AllergyRule, ...]:
+        """Return allergy rules while preserving stable ordering and ownership."""
         return tuple(self._allergy_rules.values())
 
     def _require_catalog_sku(self, sku: str) -> None:
+        """Validate catalog sku and raise a controlled error on violation."""
         if self._catalog.get_medication(sku) is None:
             raise InteractionLookupError(f"Unknown medication SKU: '{sku}'.")
 
@@ -281,6 +293,7 @@ def load_default_interactions(
 
 
 def _read_interaction_data(path: Path) -> dict[str, list[object]]:
+    """Read interaction data under the module's validation and size limits."""
     try:
         raw_data = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -310,6 +323,7 @@ def _read_interaction_data(path: Path) -> dict[str, list[object]]:
 
 
 def _parse_medication_rule(value: object) -> MedicationInteractionRule:
+    """Parse medication rule into the module's validated representation."""
     item = _object_with_exact_keys(
         value,
         {"skus", "severity", "message"},
@@ -328,6 +342,7 @@ def _parse_medication_rule(value: object) -> MedicationInteractionRule:
 
 
 def _parse_allergy_rule(value: object) -> AllergyRule:
+    """Parse allergy rule into the module's validated representation."""
     item = _object_with_exact_keys(value, {"sku", "terms"}, "allergy rule")
     terms = item["terms"]
     if not isinstance(terms, list):
@@ -340,6 +355,7 @@ def _object_with_exact_keys(
     expected_keys: set[str],
     label: str,
 ) -> dict[str, object]:
+    """Require an object whose keys exactly match the controlled interaction schema."""
     if not isinstance(value, dict) or set(value) != expected_keys:
         raise InteractionValidationError(
             f"Every {label} must contain exactly: "
@@ -350,6 +366,7 @@ def _object_with_exact_keys(
 
 
 def _normalize_query_sku(value: object) -> str:
+    """Transform query sku into its safe canonical form."""
     if not isinstance(value, str) or not value.strip():
         raise InteractionQueryError("Medication SKUs must be non-empty strings.")
     sku = value.strip().upper()
@@ -361,6 +378,7 @@ def _normalize_query_sku(value: object) -> str:
 
 
 def _normalize_current_medications(value: object) -> tuple[str, ...]:
+    """Transform current medications into its safe canonical form."""
     if not isinstance(value, list):
         raise InteractionQueryError("'current_medications' must be an array.")
     normalized = tuple(_normalize_query_sku(sku) for sku in value)
@@ -372,6 +390,7 @@ def _normalize_current_medications(value: object) -> tuple[str, ...]:
 
 
 def _normalize_allergies(value: object) -> tuple[tuple[str, str], ...]:
+    """Transform allergies into its safe canonical form."""
     if not isinstance(value, list):
         raise InteractionQueryError("'allergies' must be an array.")
 
@@ -398,6 +417,7 @@ def _normalize_allergies(value: object) -> tuple[tuple[str, str], ...]:
 
 
 def _normalize_text(value: object) -> str:
+    """Transform text into its safe canonical form."""
     _require_text(value, "text")
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_accents = "".join(
@@ -409,6 +429,7 @@ def _normalize_text(value: object) -> str:
 
 
 def _phrases_overlap(first: str, second: str) -> bool:
+    """Compare normalized phrase sets for a controlled allergy-term overlap."""
     padded_first = f" {first} "
     padded_second = f" {second} "
     return (
@@ -419,6 +440,7 @@ def _phrases_overlap(first: str, second: str) -> bool:
 
 
 def _require_text(value: object, field_name: str) -> None:
+    """Validate text and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip():
         raise InteractionValidationError(
             f"'{field_name}' must be a non-empty string."

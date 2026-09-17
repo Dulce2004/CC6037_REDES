@@ -26,7 +26,9 @@ from pharmacy_mcp.jsonrpc import (  # noqa: E402
 
 
 class JsonRpcMessageTests(unittest.TestCase):
+    """Group regression checks for json rpc message behavior and boundaries."""
     def test_create_valid_request(self) -> None:
+        """Regression check: create valid request."""
         request = Request(method="example.method", params={}, id=1)
 
         self.assertEqual(
@@ -35,12 +37,14 @@ class JsonRpcMessageTests(unittest.TestCase):
         )
 
     def test_request_without_id_is_a_notification(self) -> None:
+        """Regression check: request without id is a notification."""
         request = Request(method="example.notification", params={})
 
         self.assertTrue(request.is_notification)
         self.assertNotIn("id", request.to_dict())
 
     def test_request_with_null_id_is_not_a_notification(self) -> None:
+        """Regression check: request with null id is not a notification."""
         request = Request(method="example.method", params={}, id=None)
 
         self.assertFalse(request.is_notification)
@@ -48,6 +52,7 @@ class JsonRpcMessageTests(unittest.TestCase):
         self.assertIsNone(request.to_dict()["id"])
 
     def test_serialize_request(self) -> None:
+        """Regression check: serialize request."""
         request = Request(method="example.method", params={"value": 3}, id="req-1")
 
         serialized = serialize_message(request)
@@ -55,6 +60,7 @@ class JsonRpcMessageTests(unittest.TestCase):
         self.assertEqual(json.loads(serialized), request.to_dict())
 
     def test_deserialize_request(self) -> None:
+        """Regression check: deserialize request."""
         payload = '{"jsonrpc":"2.0","method":"example.method","params":{},"id":1}'
 
         message = deserialize_message(payload)
@@ -62,6 +68,7 @@ class JsonRpcMessageTests(unittest.TestCase):
         self.assertEqual(message, Request(method="example.method", params={}, id=1))
 
     def test_create_success_response(self) -> None:
+        """Regression check: create success response."""
         response = Response(result={"accepted": True}, id=1)
 
         self.assertEqual(
@@ -70,6 +77,7 @@ class JsonRpcMessageTests(unittest.TestCase):
         )
 
     def test_create_error_response(self) -> None:
+        """Regression check: create error response."""
         response = ErrorResponse(
             error=ErrorObject(code=METHOD_NOT_FOUND, message="Method not found"),
             id=1,
@@ -85,24 +93,29 @@ class JsonRpcMessageTests(unittest.TestCase):
         )
 
     def test_reject_request_without_jsonrpc(self) -> None:
+        """Regression check: reject request without jsonrpc."""
         with self.assertRaisesRegex(InvalidRequestError, "jsonrpc"):
             deserialize_message('{"method":"example.method","id":1}')
 
     def test_reject_request_with_wrong_version(self) -> None:
+        """Regression check: reject request with wrong version."""
         with self.assertRaisesRegex(InvalidRequestError, "2.0"):
             deserialize_message(
                 '{"jsonrpc":"1.0","method":"example.method","id":1}'
             )
 
     def test_reject_request_without_method(self) -> None:
+        """Regression check: reject request without method."""
         with self.assertRaisesRegex(InvalidRequestError, "method"):
             deserialize_message('{"jsonrpc":"2.0","params":{},"id":1}')
 
     def test_reject_invalid_json(self) -> None:
+        """Regression check: reject invalid json."""
         with self.assertRaisesRegex(ParseError, "Invalid JSON"):
             deserialize_message('{"jsonrpc":"2.0",')
 
     def test_reject_response_with_result_and_error(self) -> None:
+        """Regression check: reject response with result and error."""
         payload = (
             '{"jsonrpc":"2.0","result":{},'
             '"error":{"code":-32603,"message":"Internal error"},"id":1}'
@@ -112,18 +125,22 @@ class JsonRpcMessageTests(unittest.TestCase):
             deserialize_message(payload)
 
     def test_reject_non_string_method(self) -> None:
+        """Regression check: reject non string method."""
         with self.assertRaisesRegex(InvalidRequestError, "method"):
             deserialize_message('{"jsonrpc":"2.0","method":7,"id":1}')
 
     def test_reject_scalar_params(self) -> None:
+        """Regression check: reject scalar params."""
         with self.assertRaisesRegex(InvalidParamsError, "params"):
             Request(method="example.method", params="invalid", id=1)
 
     def test_reject_boolean_id(self) -> None:
+        """Regression check: reject boolean id."""
         with self.assertRaisesRegex(InvalidRequestError, "id"):
             Request(method="example.method", id=True)
 
     def test_reject_error_without_code(self) -> None:
+        """Regression check: reject error without code."""
         payload = (
             '{"jsonrpc":"2.0","error":{"message":"Internal error"},"id":1}'
         )
@@ -132,6 +149,7 @@ class JsonRpcMessageTests(unittest.TestCase):
             deserialize_message(payload)
 
     def test_round_trip_preserves_request(self) -> None:
+        """Regression check: round trip preserves request."""
         original = Request(
             method="example.method",
             params={"items": [1, "two", None]},

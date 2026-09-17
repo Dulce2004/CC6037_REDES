@@ -24,7 +24,9 @@ from pharmacy_mcp.host.cli import build_parser, main  # noqa: E402
 
 
 class HostChatCliTests(unittest.TestCase):
+    """Group regression checks for host chat cli behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime = PROJECT_DIRECTORY / "runtime"
         runtime.mkdir(exist_ok=True)
         unique = uuid4().hex
@@ -58,6 +60,7 @@ class HostChatCliTests(unittest.TestCase):
         }
 
     def run_chat(self, input_text, responses=(), *, manager=None, environment=None):
+        """Support the controlled test scenario for run chat."""
         stdout = io.StringIO()
         stderr = io.StringIO()
         transport = _QueueTransport(responses)
@@ -86,6 +89,7 @@ class HostChatCliTests(unittest.TestCase):
         return exit_code, stdout.getvalue(), stderr.getvalue(), transport, fake_manager
 
     def test_chat_is_registered_and_missing_credentials_fail_before_server_start(self) -> None:
+        """Regression check: chat is registered and missing credentials fail before server start."""
         parsed = build_parser().parse_args(["chat"])
         self.assertEqual(parsed.command, "chat")
 
@@ -106,6 +110,7 @@ class HostChatCliTests(unittest.TestCase):
                 manager_class.assert_not_called()
 
     def test_conversation_preserves_context_and_closes_manager(self) -> None:
+        """Regression check: conversation preserves context and closes manager."""
         responses = [_response("Primera respuesta"), _response("Segunda respuesta")]
         code, output, errors, transport, manager = self.run_chat(
             "¿Quién fue Alan Turing?\n¿En qué fecha nació?\n/exit\n",
@@ -123,6 +128,7 @@ class HostChatCliTests(unittest.TestCase):
         self.assertNotIn(self.credential, output + errors)
 
     def test_help_servers_tools_and_clear_do_not_break_session(self) -> None:
+        """Regression check: help servers tools and clear do not break session."""
         manager = _CliManager(
             tools=(
                 RegisteredTool(
@@ -152,6 +158,7 @@ class HostChatCliTests(unittest.TestCase):
         )
 
     def test_blank_input_eof_and_keyboard_interrupt_exit_cleanly(self) -> None:
+        """Regression check: blank input eof and keyboard interrupt exit cleanly."""
         code, output, errors, transport, manager = self.run_chat("\n")
         self.assertEqual(code, 0)
         self.assertEqual(errors, "")
@@ -164,6 +171,7 @@ class HostChatCliTests(unittest.TestCase):
         self.assertTrue(manager.stopped)
 
     def test_gemini_is_default_and_does_not_require_anthropic_variables(self) -> None:
+        """Regression check: gemini is default and does not require anthropic variables."""
         environment = {"GEMINI_API_KEY": self.credential}
         code, output, errors, transport, manager = self.run_chat(
             "hola\n/exit\n",
@@ -180,6 +188,7 @@ class HostChatCliTests(unittest.TestCase):
         self.assertNotIn(self.credential, output + errors)
 
     def test_selected_provider_requires_only_its_own_configuration(self) -> None:
+        """Regression check: selected provider requires only its own configuration."""
         cases = (
             ({"LLM_PROVIDER": "gemini"}, "GEMINI_API_KEY"),
             ({"LLM_PROVIDER": "invalid", "GEMINI_API_KEY": "present"}, "LLM_PROVIDER"),
@@ -198,6 +207,7 @@ class HostChatCliTests(unittest.TestCase):
                 manager_class.assert_not_called()
 
     def test_api_error_is_safe_and_next_eof_still_closes(self) -> None:
+        """Regression check: api error is safe and next eof still closes."""
         response = HTTPResponse(
             status=429,
             headers={"request-id": "req-rate"},
@@ -211,6 +221,7 @@ class HostChatCliTests(unittest.TestCase):
         self.assertTrue(manager.stopped)
 
     def test_partial_server_failure_is_reported_while_chat_remains_available(self) -> None:
+        """Regression check: partial server failure is reported while chat remains available."""
         manager = _CliManager(
             failures=(
                 ServerStartFailure(
@@ -232,11 +243,14 @@ class HostChatCliTests(unittest.TestCase):
 
 
 class _QueueTransport:
+    """Provide a deterministic queue transport test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.responses = list(responses)
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         if not self.responses:
             raise AssertionError("Unexpected network call")
@@ -244,18 +258,23 @@ class _QueueTransport:
 
 
 class _CliManager:
+    """Provide a deterministic cli manager test double for isolated scenarios."""
     def __init__(self, *, tools=(), failures=()) -> None:
+        """Support the controlled test scenario for init."""
         self.tools = tuple(tools)
         self.failures = tuple(failures)
         self.stopped = False
 
     def start_available(self):
+        """Support the controlled test scenario for start available."""
         return self.failures
 
     def list_tools(self):
+        """Support the controlled test scenario for list tools."""
         return self.tools
 
     def list_servers(self):
+        """Support the controlled test scenario for list servers."""
         return tuple(
             ServerSummary(
                 name=name,
@@ -268,15 +287,19 @@ class _CliManager:
         )
 
     def stop_all(self):
+        """Support the controlled test scenario for stop all."""
         self.stopped = True
 
 
 class _InterruptingInput:
+    """Provide a deterministic interrupting input test double for isolated scenarios."""
     def readline(self):
+        """Support the controlled test scenario for readline."""
         raise KeyboardInterrupt
 
 
 def _response(text: str) -> HTTPResponse:
+    """Support the controlled test scenario for response."""
     return HTTPResponse(
         status=200,
         headers={"request-id": "req-test"},
@@ -296,6 +319,7 @@ def _response(text: str) -> HTTPResponse:
 
 
 def _gemini_response(text: str) -> HTTPResponse:
+    """Support the controlled test scenario for gemini response."""
     return HTTPResponse(
         status=200,
         headers={"x-goog-request-id": "req-test"},

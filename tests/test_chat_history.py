@@ -16,7 +16,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class ConversationHistoryTests(unittest.TestCase):
+    """Group regression checks for conversation history behavior and boundaries."""
     def test_second_question_retains_complete_first_exchange(self) -> None:
+        """Regression check: second question retains complete first exchange."""
         history = ConversationHistory(max_messages=10)
         history.begin_turn("¿Quién fue Alan Turing?")
         history.append_assistant(
@@ -40,6 +42,7 @@ class ConversationHistoryTests(unittest.TestCase):
         )
 
     def test_clear_and_defensive_copy(self) -> None:
+        """Regression check: clear and defensive copy."""
         history = ConversationHistory()
         history.begin_turn("Hola")
         snapshot = history.messages
@@ -50,6 +53,7 @@ class ConversationHistoryTests(unittest.TestCase):
         self.assertFalse(history.has_active_turn)
 
     def test_empty_and_oversized_input_are_rejected(self) -> None:
+        """Regression check: empty and oversized input are rejected."""
         history = ConversationHistory(max_user_input_chars=5)
         for value in ("", "   "):
             with self.subTest(value=value):
@@ -59,6 +63,7 @@ class ConversationHistoryTests(unittest.TestCase):
             history.begin_turn("123456")
 
     def test_trimming_removes_whole_old_turn_not_tool_sequence(self) -> None:
+        """Regression check: trimming removes whole old turn not tool sequence."""
         history = ConversationHistory(max_messages=6)
         history.begin_turn("old")
         history.append_assistant([{"type": "text", "text": "answer"}])
@@ -105,6 +110,7 @@ class ConversationHistoryTests(unittest.TestCase):
         )
 
     def test_active_tool_exchange_that_cannot_fit_fails_clearly(self) -> None:
+        """Regression check: active tool exchange that cannot fit fails clearly."""
         history = ConversationHistory(max_messages=3)
         history.begin_turn("request")
         history.append_assistant(
@@ -130,6 +136,7 @@ class ConversationHistoryTests(unittest.TestCase):
             history.append_assistant([{"type": "text", "text": "final"}])
 
     def test_result_ids_order_and_count_are_validated(self) -> None:
+        """Regression check: result ids order and count are validated."""
         history = ConversationHistory()
         history.begin_turn("request")
         history.append_assistant(
@@ -157,6 +164,7 @@ class ConversationHistoryTests(unittest.TestCase):
             )
 
     def test_gemini_thought_signature_survives_copy_and_whole_turn_trimming(self) -> None:
+        """Regression check: gemini thought signature survives copy and whole turn trimming."""
         history = ConversationHistory(max_messages=6)
         history.begin_turn("old")
         history.append_assistant([{"type": "text", "text": "old answer"}])

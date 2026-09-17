@@ -1,4 +1,9 @@
-"""Evaluación educativa de texto de síntomas mediante reglas controladas."""
+"""Evaluación educativa de texto de síntomas mediante reglas controladas.
+
+Normaliza texto, edad y duración y compara únicamente definiciones simuladas para
+producir severidad, banderas y acciones prudentes. Las banderas urgentes tienen
+prioridad y una ausencia de coincidencias nunca se presenta como diagnóstico. Las
+funciones son puras y no consultan al LLM, red o base de datos."""
 
 from __future__ import annotations
 
@@ -143,6 +148,7 @@ def assess_symptoms(
 
 
 def _validate_symptom_text(value: object) -> str:
+    """Validate symptom text and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip():
         raise SymptomAssessmentValidationError(
             "'symptoms' must be a non-empty string."
@@ -164,6 +170,7 @@ def _validate_optional_integer(
     field_name: str,
     maximum: int,
 ) -> int | None:
+    """Validate optional integer and raise a controlled error on violation."""
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
@@ -178,6 +185,7 @@ def _validate_optional_integer(
 
 
 def _normalize_text(value: str) -> str:
+    """Transform text into its safe canonical form."""
     decomposed = unicodedata.normalize("NFKD", value.casefold())
     without_accents = "".join(
         character
@@ -191,6 +199,7 @@ def _find_matches(
     normalized_text: str,
     definitions: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> list[str]:
+    """Return matches while preserving stable ordering and ownership."""
     padded_text = f" {normalized_text} "
     return [
         identifier
@@ -207,6 +216,7 @@ def _determine_severity(
     age: int | None,
     duration_days: int | None,
 ) -> tuple[str, list[str]]:
+    """Select severity from controlled red flags, age and duration rules."""
     if red_flags:
         return "urgent", ["urgent_red_flag_detected"]
     if age == 0 and "fever" in recognized:
@@ -231,6 +241,7 @@ def _determine_severity(
 
 
 def _recommended_action(severity: str) -> str:
+    """Map controlled severity to a cautious non-diagnostic next-step message."""
     if severity == "urgent":
         return (
             "Seek urgent medical care now. Do not use this result to select "

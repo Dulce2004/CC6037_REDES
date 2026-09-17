@@ -23,7 +23,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class HostConfigurationTests(unittest.TestCase):
+    """Group regression checks for host configuration behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         self.config_path = runtime_directory / f"host-{uuid4().hex}.json"
@@ -36,12 +38,14 @@ class HostConfigurationTests(unittest.TestCase):
         self.addCleanup(self.filesystem_path.rmdir)
 
     def write_config(self, value: object) -> None:
+        """Support the controlled test scenario for write config."""
         self.config_path.write_text(
             json.dumps(value, ensure_ascii=False),
             encoding="utf-8",
         )
 
     def test_default_config_contains_local_servers_and_disabled_remote(self) -> None:
+        """Regression check: default config contains local servers and disabled remote."""
         config = load_host_config(
             DEFAULT_CONFIG_PATH,
             environ={
@@ -117,6 +121,7 @@ class HostConfigurationTests(unittest.TestCase):
         )
 
     def test_npx_builtin_uses_controlled_platform_launchers(self) -> None:
+        """Regression check: npx builtin uses controlled platform launchers."""
         self.write_config(
             {
                 "servers": [
@@ -142,6 +147,7 @@ class HostConfigurationTests(unittest.TestCase):
         )
 
     def test_filesystem_policy_is_validated_canonical_and_immutable(self) -> None:
+        """Regression check: filesystem policy is validated canonical and immutable."""
         server = {
             **self.server_config("filesystem"),
             "filesystem_policy": {
@@ -163,6 +169,7 @@ class HostConfigurationTests(unittest.TestCase):
             policy.creation_arguments["other"] = frozenset({"path"})
 
     def test_filesystem_policy_rejects_unsafe_roots_and_invalid_shapes(self) -> None:
+        """Regression check: filesystem policy rejects unsafe roots and invalid shapes."""
         root_file = self.filesystem_path / "not-a-directory.txt"
         root_file.write_text("file", encoding="utf-8")
         self.addCleanup(root_file.unlink, missing_ok=True)
@@ -205,6 +212,7 @@ class HostConfigurationTests(unittest.TestCase):
                     load_host_config(self.config_path)
 
     def test_repository_and_filesystem_policy_are_mutually_exclusive(self) -> None:
+        """Regression check: repository and filesystem policy are mutually exclusive."""
         self.write_config(
             {
                 "servers": [
@@ -227,6 +235,7 @@ class HostConfigurationTests(unittest.TestCase):
             load_host_config(self.config_path)
 
     def test_required_declared_variable_must_be_present_and_nonempty(self) -> None:
+        """Regression check: required declared variable must be present and nonempty."""
         self.write_config(
             {
                 "variables": ["TEST_REPOSITORY"],
@@ -245,6 +254,7 @@ class HostConfigurationTests(unittest.TestCase):
                     load_host_config(self.config_path, environ=environment)
 
     def test_only_explicitly_declared_variables_are_expanded(self) -> None:
+        """Regression check: only explicitly declared variables are expanded."""
         self.write_config(
             {
                 "servers": [
@@ -263,6 +273,7 @@ class HostConfigurationTests(unittest.TestCase):
             )
 
     def test_repository_policy_is_validated_and_canonicalized(self) -> None:
+        """Regression check: repository policy is validated and canonicalized."""
         self.write_config(
             {
                 "variables": ["TEST_REPOSITORY"],
@@ -294,6 +305,7 @@ class HostConfigurationTests(unittest.TestCase):
     def test_repository_policy_rejects_missing_duplicate_or_nonexistent_data(
         self,
     ) -> None:
+        """Regression check: repository policy rejects missing duplicate or nonexistent data."""
         base = {
             **self.server_config("git"),
             "repository_policy": {
@@ -326,6 +338,7 @@ class HostConfigurationTests(unittest.TestCase):
                     load_host_config(self.config_path)
 
     def test_config_supports_multiple_unique_stdio_servers(self) -> None:
+        """Regression check: config supports multiple unique stdio servers."""
         self.write_config(
             {
                 "servers": [
@@ -343,6 +356,7 @@ class HostConfigurationTests(unittest.TestCase):
         )
 
     def test_duplicate_server_names_are_rejected(self) -> None:
+        """Regression check: duplicate server names are rejected."""
         self.write_config(
             {
                 "servers": [
@@ -358,6 +372,7 @@ class HostConfigurationTests(unittest.TestCase):
     def test_server_names_reject_dots_ambiguous_separator_and_unsafe_characters(
         self,
     ) -> None:
+        """Regression check: server names reject dots ambiguous separator and unsafe characters."""
         for name in (
             "pharmacy.local",
             "pharmacy__backup",
@@ -370,6 +385,7 @@ class HostConfigurationTests(unittest.TestCase):
                     load_host_config(self.config_path)
 
     def test_unknown_transport_is_rejected(self) -> None:
+        """Regression check: unknown transport is rejected."""
         server = self.server_config("pharmacy")
         server["transport"] = "websocket"
         self.write_config({"servers": [server]})
@@ -378,6 +394,7 @@ class HostConfigurationTests(unittest.TestCase):
             load_host_config(self.config_path)
 
     def test_http_server_configuration_is_strict_and_secret_safe(self) -> None:
+        """Regression check: http server configuration is strict and secret safe."""
         self.write_config(
             {
                 "variables": ["REMOTE_URL", "REMOTE_TOKEN"],
@@ -412,6 +429,7 @@ class HostConfigurationTests(unittest.TestCase):
         self.assertNotIn("super-secret-token", repr(config))
 
     def test_http_rejects_remote_cleartext_and_undeclared_token_variable(self) -> None:
+        """Regression check: http rejects remote cleartext and undeclared token variable."""
         base = {
             "name": "pharmacy-remote",
             "transport": "http",
@@ -460,6 +478,7 @@ class HostConfigurationTests(unittest.TestCase):
             )
 
     def test_unknown_fields_and_invalid_timeouts_are_rejected(self) -> None:
+        """Regression check: unknown fields and invalid timeouts are rejected."""
         cases = (
             {**self.server_config("pharmacy"), "unknown": True},
             {
@@ -483,6 +502,7 @@ class HostConfigurationTests(unittest.TestCase):
                     load_host_config(self.config_path)
 
     def test_empty_or_malformed_server_collection_is_rejected(self) -> None:
+        """Regression check: empty or malformed server collection is rejected."""
         for value in ({}, {"servers": []}, {"servers": "pharmacy"}):
             with self.subTest(value=value):
                 self.write_config(value)
@@ -491,6 +511,7 @@ class HostConfigurationTests(unittest.TestCase):
 
     @staticmethod
     def server_config(name: str) -> dict[str, object]:
+        """Support the controlled test scenario for server config."""
         return {
             "name": name,
             "transport": "stdio",

@@ -258,7 +258,9 @@ The endpoint is `http://127.0.0.1:8080/mcp` and its health check is
 `http://127.0.0.1:8080/health`. See the
 [Streamable HTTP guide](docs/streamable-http-guide.md) for exact headers,
 session flow, limits, Origin policy, host configuration, and safe examples.
-Remote hosts require HTTPS; no Cloud Run service is deployed by this project.
+Remote hosts require HTTPS. Repository contents cannot prove whether an external
+Cloud Run demonstration currently exists; verify that state manually in the
+authorized cloud account.
 
 ## Build the Pharmacy HTTP container
 
@@ -316,6 +318,20 @@ required only for the selected provider and are never stored or logged. Read
 [the chatbot guide](docs/chatbot-guide.md) before using an API account or
 authorizing any mutation.
 
+The same orchestrator is available through the loopback web interface. After
+setting the provider variables and the dedicated Git/Filesystem roots required
+by the selected host configuration, run:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -B -m pharmacy_mcp.host.web
+```
+
+Open `http://127.0.0.1:8081/`. See the chatbot guide for session isolation,
+same-origin checks, polling, keyboard behavior, and one-time mutation
+confirmation. Credentials remain in the backend process and must never be
+entered in the browser.
+
 ## Run the tests
 
 From the repository root:
@@ -353,6 +369,7 @@ No test contacts either provider or consumes API quota or credits.
 - [Gemini and Anthropic chatbot and tool-loop guide](docs/chatbot-guide.md)
 - [Safe external Git MCP demonstration](docs/git-mcp-demo.md)
 - [Combined Filesystem and Git MCP demonstration](docs/filesystem-git-mcp-demo.md)
+- [Technical requirements audit](docs/requirements-audit.md)
 
 The specification contains the exact lifecycle, message shapes, method behavior,
 tool schema, result format, and implemented errors. The demonstration guide walks
@@ -377,7 +394,9 @@ through a complete manual handshake and tool call.
 - Stdio has no network authentication. HTTP supports a configured Bearer token
   and explicit Origin allowlist but is not a production identity system.
 - The configured remote Pharmacy entry is disabled by default. There is no
-  deployed Pharmacy service, Git remote operation, web UI, or SSE response.
+  repository-local proof of an active external Pharmacy deployment, and SSE is
+  not implemented. The loopback web UI is implemented; external cloud state
+  requires a separate authorized manual verification.
 - SQLite is durable only on one local filesystem. A container filesystem is
   ephemeral and multiple service instances cannot safely share this database;
   a production deployment needs a managed database.
@@ -396,10 +415,13 @@ The following items are planned possibilities, not implemented functionality:
 
 - Add later fulfillment and cancellation transitions if the course scope
   requires them.
-- Add Docker and a single-instance Cloud Run academic demonstration, then
-  replace SQLite with a managed database before any production design.
-- Add the separate web interface after the remote demonstration is validated.
-- Capture and analyze later network transports with Wireshark.
+- Replace ephemeral SQLite with a managed transactional database before any
+  production or multi-instance design.
+- Verify any external Cloud Run, Artifact Registry, Secret Manager, IAM, cost,
+  and cleanup state manually in the authorized account; local files are not
+  evidence of current cloud state.
+- Prepare the final academic report, presentation, AI-use declaration if
+  required, and repository-access evidence.
 
 ## Technical references
 

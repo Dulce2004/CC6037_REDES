@@ -1,4 +1,9 @@
-"""Line-delimited stdio transport for the local pharmacy MCP server."""
+"""Transporte stdio delimitado por líneas para el servidor Pharmacy MCP.
+
+Cada línea UTF-8 contiene exactamente un mensaje JSON-RPC y stdout queda reservado a
+respuestas; diagnósticos de transporte usan stderr. Un solo servidor conserva el
+lifecycle hasta EOF, momento en que se cierra SQLite. ``main`` configura streams y la
+ruta runtime antes de entrar al bucle bloqueante."""
 
 from __future__ import annotations
 
@@ -95,6 +100,7 @@ def main() -> int:
 
 
 def _runtime_database_path() -> Path:
+    """Resolve the configured SQLite target without accepting an empty path."""
     configured_path = os.environ.get(DATABASE_PATH_ENVIRONMENT_VARIABLE)
     if configured_path is not None:
         if not configured_path.strip():

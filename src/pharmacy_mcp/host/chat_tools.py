@@ -1,4 +1,9 @@
-"""Dynamic MCP tool conversion and bounded provider result rendering."""
+"""Dynamic MCP tool conversion and bounded provider result rendering.
+
+This module copies public tool definitions into provider schemas and creates a
+separate, size-limited view of MCP results for the LLM. Secret-shaped fields, binary
+content and large write bodies are omitted from summaries without modifying the wire
+payload. The helpers are pure and preserve registry order."""
 
 from __future__ import annotations
 
@@ -122,6 +127,7 @@ def sanitized_argument_summary(
 
 
 def mutation_effect(server_name: str, tool_name: str) -> str:
+    """Summarize a mutable call's bounded arguments for human confirmation."""
     if server_name == "pharmacy" and tool_name == "create_order":
         return "creará una orden y descontará inventario si la validación termina bien"
     if server_name == "git":
@@ -132,6 +138,7 @@ def mutation_effect(server_name: str, tool_name: str) -> str:
 
 
 def _omit_content(value: JsonValue) -> JsonValue:
+    """Remove bulky MCP content blocks before exposing a tool result to the model."""
     if isinstance(value, dict):
         result: dict[str, JsonValue] = {}
         for key, item in value.items():
@@ -146,6 +153,7 @@ def _omit_content(value: JsonValue) -> JsonValue:
 
 
 def _omit_binary(value: JsonValue) -> JsonValue:
+    """Replace binary-like result fields with explicit omission markers."""
     if isinstance(value, dict):
         return {
             key: (
@@ -161,6 +169,7 @@ def _omit_binary(value: JsonValue) -> JsonValue:
 
 
 def _json_text(value: JsonValue) -> str:
+    """Serialize finite JSON compactly for a bounded model-facing tool result."""
     try:
         return json.dumps(
             value,
@@ -174,6 +183,7 @@ def _json_text(value: JsonValue) -> str:
 
 
 def _bounded_text(value: str, maximum: int) -> str:
+    """Truncate long text with an explicit marker after sensitive data is removed."""
     if len(value) <= maximum:
         return value
     suffix = f" {TOOL_RESULT_TRUNCATION_MARKER} ({len(value)} characters total)"

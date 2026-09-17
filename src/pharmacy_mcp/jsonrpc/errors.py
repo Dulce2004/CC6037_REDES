@@ -1,4 +1,9 @@
-"""Excepciones y códigos de error estándar de JSON-RPC 2.0."""
+"""Excepciones y códigos de error estándar de JSON-RPC 2.0.
+
+Cada excepción conserva un código de protocolo estable y un mensaje controlado para
+construir respuestas estructuradas. No contiene estado de transporte ni datos de
+solicitudes, por lo que puede compartirse entre stdio, HTTP y el cliente en memoria.
+El módulo no produce respuestas ni efectos secundarios."""
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -15,6 +20,7 @@ class JsonRpcError(ValueError):
     default_message = "Invalid Request"
 
     def __init__(self, message: str | None = None) -> None:
+        """Store a standard code, public message and optional JSON-safe error data."""
         self.message = message or self.default_message
         super().__init__(self.message)
 

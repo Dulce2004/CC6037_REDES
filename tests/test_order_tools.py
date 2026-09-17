@@ -23,7 +23,9 @@ from pharmacy_mcp.server import (  # noqa: E402
 
 
 class PharmacyOrderToolTests(unittest.TestCase):
+    """Group regression checks for pharmacy order tool behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.server = PharmacyMCPServer()
         initialized = self.server.process_request(
             Request(
@@ -50,6 +52,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         *,
         request_id: int = 2,
     ) -> Response | ErrorResponse:
+        """Support the controlled test scenario for call tool."""
         response = self.server.process_request(
             Request(
                 method="tools/call",
@@ -61,6 +64,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         return response
 
     def stock_quantity(self, sku: str, branch_id: str) -> int:
+        """Support the controlled test scenario for stock quantity."""
         response = self.call_tool(
             "check_stock",
             {"sku": sku, "branch_id": branch_id},
@@ -74,6 +78,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         response: Response | ErrorResponse,
         message_fragment: str,
     ) -> None:
+        """Apply the shared assertion for tool error."""
         self.assertIsInstance(response, Response)
         self.assertTrue(response.result["isError"])
         self.assertNotIn("error", response.to_dict())
@@ -83,6 +88,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         )
 
     def test_create_order_then_status_and_stock_form_one_workflow(self) -> None:
+        """Regression check: create order then status and stock form one workflow."""
         self.assertEqual(self.stock_quantity("MED-ANA-001", "zona-5"), 25)
 
         created = self.call_tool(
@@ -110,6 +116,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         self.assertEqual(status.result["structuredContent"]["order"], order)
 
     def test_multi_item_order_uses_exact_catalog_prices(self) -> None:
+        """Regression check: multi item order uses exact catalog prices."""
         response = self.call_tool(
             "create_order",
             {
@@ -130,6 +137,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         )
 
     def test_missing_prescription_is_tool_error_and_does_not_change_stock(self) -> None:
+        """Regression check: missing prescription is tool error and does not change stock."""
         before = self.stock_quantity("MED-RX-001", "zona-5")
         response = self.call_tool(
             "create_order",
@@ -143,6 +151,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         self.assertEqual(self.stock_quantity("MED-RX-001", "zona-5"), before)
 
     def test_simulated_prescription_reference_allows_rx_order(self) -> None:
+        """Regression check: simulated prescription reference allows rx order."""
         prescription_id = "RX-ACADEMIC-2026"
         response = self.call_tool(
             "create_order",
@@ -164,6 +173,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         self.assertIn("not a real purchase", response.result["content"][0]["text"])
 
     def test_failed_multi_item_order_is_atomic(self) -> None:
+        """Regression check: failed multi item order is atomic."""
         before = self.stock_quantity("MED-ANA-001", "zona-5")
         response = self.call_tool(
             "create_order",
@@ -180,6 +190,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
         self.assertEqual(self.stock_quantity("MED-ANA-001", "zona-5"), before)
 
     def test_well_formed_domain_failures_are_successful_tool_errors(self) -> None:
+        """Regression check: well formed domain failures are successful tool errors."""
         cases = (
             (
                 {
@@ -212,6 +223,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
                 self.assert_tool_error(response, message)
 
     def test_malformed_create_order_arguments_are_invalid_params(self) -> None:
+        """Regression check: malformed create order arguments are invalid params."""
         cases = (
             {},
             {"branch_id": "zona-5"},
@@ -258,6 +270,7 @@ class PharmacyOrderToolTests(unittest.TestCase):
                 self.assertEqual(response.error.code, INVALID_PARAMS)
 
     def test_get_order_status_distinguishes_shape_and_lookup_errors(self) -> None:
+        """Regression check: get order status distinguishes shape and lookup errors."""
         malformed = (
             {},
             {"order_id": ""},

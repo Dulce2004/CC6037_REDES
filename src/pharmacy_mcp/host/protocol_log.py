@@ -1,4 +1,9 @@
-"""Durable, redacted JSON Lines logging for MCP protocol traffic."""
+"""Durable redacted JSON Lines logging for MCP and host metadata.
+
+The logger recursively redacts sensitive keys, omits write bodies and binary payloads,
+then enforces per-string and whole-entry bounds before append. A lock serializes writes
+and each line is flushed so protocol evidence survives orderly shutdown. Opening and
+appending the configured JSONL file are the module's only persistent side effects."""
 
 from __future__ import annotations
 
@@ -52,6 +57,9 @@ def redact_sensitive_data(value: JsonValue) -> JsonValue:
     """Return a recursively redacted copy without mutating ``value``."""
 
     if isinstance(value, dict):
+        # Redact by case-insensitive key before descending so nested credential
+        # containers are replaced wholesale and their original values are never
+        # copied into the log representation.
         redacted: dict[str, JsonValue] = {}
         for key, item in value.items():
             redacted[key] = (
@@ -77,6 +85,7 @@ class MCPProtocolLogger:
         max_payload_chars: int = DEFAULT_MAX_LOG_PAYLOAD_CHARS,
         max_string_chars: int = DEFAULT_MAX_LOG_STRING_CHARS,
     ) -> None:
+        """Configure optional JSONL persistence, redaction limits and synchronized writes."""
         if not isinstance(show_traffic, bool):
             raise TypeError("'show_traffic' must be a boolean.")
         _validate_log_limit(max_payload_chars, "max_payload_chars", minimum=256)
@@ -98,6 +107,7 @@ class MCPProtocolLogger:
 
     @property
     def is_open(self) -> bool:
+        """Return whether this logger currently owns an open output stream."""
         return self._file is not None and not self._file.closed
 
     def outbound(
@@ -106,6 +116,7 @@ class MCPProtocolLogger:
         payload: str,
         transport: str = "stdio",
     ) -> None:
+        """Record one redacted host-to-server JSON-RPC payload."""
         self._record_message(server_name, transport, "outbound", payload)
 
     def inbound(
@@ -114,6 +125,7 @@ class MCPProtocolLogger:
         payload: str,
         transport: str = "stdio",
     ) -> None:
+        """Record one redacted server-to-host JSON-RPC payload."""
         self._record_message(server_name, transport, "inbound", payload)
 
     def diagnostic(
@@ -185,6 +197,7 @@ class MCPProtocolLogger:
         )
 
     def close(self) -> None:
+        """Release close without leaking owned resources."""
         with self._lock:
             if self._file is None:
                 return
@@ -200,9 +213,11 @@ class MCPProtocolLogger:
                 self._file = None
 
     def __enter__(self) -> MCPProtocolLogger:
+        """Enter the mcpprotocol logger lifecycle and return the active instance."""
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        """Leave the mcpprotocol logger lifecycle and release resources deterministically."""
         self.close()
 
     def _record_message(
@@ -212,6 +227,7 @@ class MCPProtocolLogger:
         direction: str,
         payload: str,
     ) -> None:
+        """Normalize, redact and append one protocol message with transport metadata."""
         decoded, message_type = _decode_message(payload)
         entry: dict[str, JsonValue] = {
             "timestamp": _utc_timestamp(),
@@ -236,6 +252,7 @@ class MCPProtocolLogger:
             self._write_diagnostic(f"[MCP log] {line}")
 
     def _bounded_payload(self, value: JsonValue) -> JsonValue:
+        """Redact sensitive fields before truncating a defensive payload copy."""
         return _prepare_log_payload(
             value,
             max_payload_chars=self._max_payload_chars,
@@ -243,6 +260,7 @@ class MCPProtocolLogger:
         )
 
     def _append_entry(self, entry: dict[str, JsonValue]) -> str:
+        """Serialize one finite JSONL entry and append it under the logger lock."""
         line = json.dumps(
             entry,
             ensure_ascii=False,
@@ -267,6 +285,7 @@ class MCPProtocolLogger:
         return line
 
     def _open(self) -> None:
+        """Create the configured parent directory and open the owned UTF-8 log stream."""
         with self._lock:
             if self._failure is not None:
                 raise self._failure
@@ -281,6 +300,7 @@ class MCPProtocolLogger:
                 raise failure from exc
 
     def _write_diagnostic(self, line: str) -> None:
+        """Write a bounded fallback diagnostic to stderr without raising recursively."""
         try:
             self._diagnostic_stream.write(f"{line}\n")
             self._diagnostic_stream.flush()
@@ -289,6 +309,7 @@ class MCPProtocolLogger:
 
 
 def _decode_message(payload: str) -> tuple[JsonValue, str]:
+    """Parse message into the module's validated representation."""
     try:
         decoded = json.loads(payload, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError):
@@ -306,6 +327,7 @@ def _decode_message(payload: str) -> tuple[JsonValue, str]:
 
 
 def _sanitize_unstructured_text(value: str) -> str:
+    """Transform unstructured text into its safe canonical form."""
     try:
         decoded = json.loads(value, parse_constant=_reject_json_constant)
     except (json.JSONDecodeError, ValueError):
@@ -331,6 +353,8 @@ def _prepare_log_payload(
 ) -> JsonValue:
     """Redact first, then bound strings and the complete logged payload."""
 
+    # Security order is deliberate: redact first, then truncate.  Truncating a raw
+    # value could preserve a usable prefix of a credential in the durable file.
     redacted = redact_sensitive_data(value)
     bounded = _truncate_values(redacted, max_string_chars=max_string_chars)
     serialized = json.dumps(
@@ -415,6 +439,7 @@ def _omit_write_content(value: JsonValue) -> JsonValue:
 
 
 def _truncate_values(value: JsonValue, *, max_string_chars: int) -> JsonValue:
+    """Recursively bound string values after the payload has been redacted."""
     if isinstance(value, dict):
         result: dict[str, JsonValue] = {}
         for key, item in value.items():
@@ -441,6 +466,7 @@ def _truncate_values(value: JsonValue, *, max_string_chars: int) -> JsonValue:
 
 
 def _validate_log_limit(value: object, name: str, *, minimum: int) -> None:
+    """Validate log limit and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -453,6 +479,7 @@ def _validate_log_limit(value: object, name: str, *, minimum: int) -> None:
 
 
 def _utc_timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp suitable for one audit entry."""
     return (
         datetime.now(timezone.utc)
         .isoformat(timespec="milliseconds")
@@ -461,4 +488,5 @@ def _utc_timestamp() -> str:
 
 
 def _reject_json_constant(value: str) -> None:
+    """Validate json constant and raise a controlled error on violation."""
     raise ValueError(f"Invalid JSON numeric constant: {value}")

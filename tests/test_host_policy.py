@@ -33,7 +33,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class RepositoryInvocationPolicyTests(unittest.TestCase):
+    """Group regression checks for repository invocation policy behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         RUNTIME_DIRECTORY.mkdir(exist_ok=True)
         self.temporary_root = RUNTIME_DIRECTORY / f"policy-{uuid4().hex}"
         self.temporary_root.mkdir()
@@ -63,6 +65,7 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
         *,
         allow_mutation: bool = False,
     ) -> dict[str, object]:
+        """Support the controlled test scenario for prepare."""
         return prepare_repository_invocation(
             self.policy,
             tool_name=tool_name,
@@ -73,6 +76,7 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
     def test_read_is_allowed_and_arguments_are_copied_with_canonical_path(
         self,
     ) -> None:
+        """Regression check: read is allowed and arguments are copied with canonical path."""
         arguments = {"repo_path": str(self.root), "nested": {"value": 1}}
         original = deepcopy(arguments)
 
@@ -88,6 +92,7 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
         self.assertEqual(prepared["repo_path"], str(self.policy.root))
 
     def test_mutation_is_blocked_by_default_and_allowed_explicitly(self) -> None:
+        """Regression check: mutation is blocked by default and allowed explicitly."""
         with self.assertRaisesRegex(
             RepositoryPolicyViolation, "--allow-mutation"
         ) as context:
@@ -104,6 +109,7 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
     def test_parent_segments_external_and_nonexistent_paths_are_rejected(
         self,
     ) -> None:
+        """Regression check: parent segments external and nonexistent paths are rejected."""
         parent_alias = self.root / ".." / self.root.name
         missing = self.temporary_root / "missing"
         for candidate, message in (
@@ -116,11 +122,13 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
                     self.prepare("git_status", str(candidate))
 
     def test_relative_path_is_rejected(self) -> None:
+        """Regression check: relative path is rejected."""
         with self.assertRaisesRegex(RepositoryPolicyViolation, "absolute"):
             self.prepare("git_status", "allowed")
 
     @unittest.skipUnless(os.name == "nt", "Windows path-case behavior")
     def test_windows_case_alias_is_accepted(self) -> None:
+        """Regression check: windows case alias is accepted."""
         alias = str(self.root).swapcase()
 
         prepared = self.prepare("git_status", alias)
@@ -128,6 +136,7 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
         self.assertEqual(prepared["repo_path"], str(self.policy.root))
 
     def test_symlink_escape_is_rejected_when_symlinks_are_available(self) -> None:
+        """Regression check: symlink escape is rejected when symlinks are available."""
         link = self.root / "escape"
         try:
             link.symlink_to(self.external, target_is_directory=True)
@@ -160,7 +169,9 @@ class RepositoryInvocationPolicyTests(unittest.TestCase):
 
 
 class ManagerPolicyTests(unittest.TestCase):
+    """Group regression checks for manager policy behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         RUNTIME_DIRECTORY.mkdir(exist_ok=True)
         self.root = RUNTIME_DIRECTORY / f"manager-policy-{uuid4().hex}"
         self.root.mkdir()
@@ -200,6 +211,7 @@ class ManagerPolicyTests(unittest.TestCase):
         )
 
     def test_local_rejection_is_logged_and_never_sent_to_server(self) -> None:
+        """Regression check: local rejection is logged and never sent to server."""
         with self.assertRaisesRegex(MCPHostError, "--allow-mutation"):
             self.manager.invoke_tool(
                 "git__git_add",
@@ -217,6 +229,7 @@ class ManagerPolicyTests(unittest.TestCase):
     def test_authorization_is_logged_and_original_registered_name_is_sent(
         self,
     ) -> None:
+        """Regression check: authorization is logged and original registered name is sent."""
         result = self.manager.invoke_tool(
             "git__git_add",
             {"repo_path": str(self.root), "files": ["README.md"]},
@@ -231,9 +244,11 @@ class ManagerPolicyTests(unittest.TestCase):
         self.assertEqual(entries[0]["payload"]["tool"], "git_add")
 
     def test_chat_confirmation_classification_uses_repository_policy(self) -> None:
+        """Regression check: chat confirmation classification uses repository policy."""
         self.assertTrue(self.manager.requires_confirmation("git__git_add"))
 
     def test_repository_rejection_is_logged_without_exposing_path(self) -> None:
+        """Regression check: repository rejection is logged without exposing path."""
         outside = self.root.parent
 
         with self.assertRaisesRegex(MCPHostError, "outside"):
@@ -249,6 +264,7 @@ class ManagerPolicyTests(unittest.TestCase):
         self.assertNotIn(str(outside), json.dumps(entry))
 
     def read_entries(self) -> list[dict[str, object]]:
+        """Support the controlled test scenario for read entries."""
         return [
             json.loads(line)
             for line in self.log_path.read_text(encoding="utf-8").splitlines()
@@ -256,7 +272,9 @@ class ManagerPolicyTests(unittest.TestCase):
 
 
 class ManagerCleanupTests(unittest.TestCase):
+    """Group regression checks for manager cleanup behavior and boundaries."""
     def test_failure_stopping_either_server_does_not_skip_the_other(self) -> None:
+        """Regression check: failure stopping either server does not skip the other."""
         RUNTIME_DIRECTORY.mkdir(exist_ok=True)
         root = RUNTIME_DIRECTORY / f"manager-close-{uuid4().hex}"
         root.mkdir()
@@ -299,23 +317,28 @@ class ManagerCleanupTests(unittest.TestCase):
 
 
 class _RecordingClient:
+    """Provide a deterministic recording client test double for isolated scenarios."""
     def __init__(self, *, fail_on_stop: bool = False) -> None:
+        """Support the controlled test scenario for init."""
         self.is_ready = True
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.fail_on_stop = fail_on_stop
         self.stopped = False
 
     def call_tool(self, tool_name: str, arguments: dict[str, object]) -> object:
+        """Support the controlled test scenario for call tool."""
         self.calls.append((tool_name, deepcopy(arguments)))
         return {"content": [{"type": "text", "text": "ok"}]}
 
     def stop(self) -> None:
+        """Support the controlled test scenario for stop."""
         self.stopped = True
         if self.fail_on_stop:
             raise RuntimeError("stop failed")
 
 
 def _remove_generated_tree(path: Path) -> None:
+    """Support the controlled test scenario for remove generated tree."""
     canonical_parent = path.parent.resolve(strict=True)
     if canonical_parent != RUNTIME_DIRECTORY.resolve(strict=True):
         raise AssertionError("Refusing to remove a directory outside runtime")

@@ -9,8 +9,10 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <!-- Accessibility: bypass repeated status content and reach the composer. -->
   <a class="skip-link" href="#composer">Ir al mensaje</a>
   <div class="page-shell">
+    <!-- Header: product identity and the live backend connection indicator. -->
     <header class="topbar">
       <div class="brand-mark" aria-hidden="true">Rx</div>
       <div>
@@ -22,11 +24,13 @@
       </div>
     </header>
 
+    <!-- Accessible alert region populated only with backend-safe error text. -->
     <div id="connection-error" class="connection-error" role="alert" hidden>
       No se pudo conectar con el backend local. Comprueba que el host siga activo.
     </div>
 
     <main class="workspace">
+      <!-- System status: provider metadata and MCP server availability. -->
       <aside class="status-panel" aria-labelledby="status-heading">
         <div class="panel-heading">
           <p class="eyebrow">Estado local</p>
@@ -50,6 +54,7 @@
         </div>
       </aside>
 
+      <!-- Conversation: isolated in-memory messages for the current browser cookie. -->
       <section class="chat-panel" aria-labelledby="conversation-heading">
         <div class="chat-heading">
           <div>
@@ -61,6 +66,7 @@
           </button>
         </div>
 
+        <!-- Polite live log announces new messages without interrupting typing. -->
         <div id="message-list" class="message-list" role="log" aria-live="polite" aria-relevant="additions text">
           <div id="empty-state" class="empty-state">
             <div class="empty-icon" aria-hidden="true">✦</div>
@@ -69,11 +75,13 @@
           </div>
         </div>
 
+        <!-- Loading state remains textual when reduced motion disables the spinner. -->
         <div id="processing" class="processing" role="status" aria-live="polite" hidden>
           <span class="spinner" aria-hidden="true"></span>
           <span>Procesando respuesta…</span>
         </div>
 
+        <!-- Composer: bounded text input with native label and keyboard submission. -->
         <form id="composer" class="composer">
           <label for="message-input">Mensaje</label>
           <div class="composer-row">
@@ -88,6 +96,7 @@
           </div>
         </form>
 
+        <!-- Persistent academic/medical limitation; never hidden responsively. -->
         <div class="medical-warning" role="note">
           <strong>Sistema académico.</strong>
           No sustituye atención, diagnóstico ni consejo médico. No introduzcas datos reales de pacientes.
@@ -96,6 +105,7 @@
     </main>
   </div>
 
+  <!-- Mutation dialog: rejection is autofocus/default and Escape also rejects. -->
   <dialog id="confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-effect">
     <form method="dialog" class="confirmation-card">
       <div class="confirmation-icon" aria-hidden="true">!</div>

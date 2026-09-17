@@ -1,4 +1,10 @@
-"""Visible, sequential provider-neutral LLM-to-MCP orchestration loop."""
+"""Visible sequential provider-neutral LLM-to-MCP orchestration loop.
+
+``ChatOrchestrator`` owns in-memory history, converts registered tools, correlates
+every tool request/result pair and asks for confirmation before mutable calls. A turn
+is either closed coherently or retained with an explicit safe error; round and result
+limits prevent unbounded loops. Side effects occur only through the injected manager
+and logger."""
 
 from __future__ import annotations
 
@@ -44,11 +50,13 @@ class ChatError(RuntimeError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ChatLimits:
+    """Coordinate chat limits state while preserving this module's lifecycle invariants."""
     max_tool_rounds: int = 8
     max_tools_per_response: int = DEFAULT_MAX_TOOLS_PER_RESPONSE
     max_tool_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed chat limits invariants."""
         _limit(self.max_tool_rounds, "max_tool_rounds", 1, 32)
         _limit(self.max_tools_per_response, "max_tools_per_response", 1, 64)
         _limit(self.max_tool_result_chars, "max_tool_result_chars", 256, 1_000_000)
@@ -70,6 +78,7 @@ class ChatOrchestrator:
         confirmation: Confirmation | None = None,
         limits: ChatLimits | None = None,
     ) -> None:
+        """Bind one LLM client, namespaced tool manager and bounded conversation history."""
         self.manager = manager
         self.client = client
         self.history = history or ConversationHistory()
@@ -81,17 +90,21 @@ class ChatOrchestrator:
 
     @property
     def provider_name(self) -> str:
+        """Return the provider label exposed by the injected LLM client."""
         return self.client.provider_name
 
     @property
     def model_name(self) -> str:
+        """Return the configured model label exposed by the injected LLM client."""
         return self.client.model_name
 
     def clear(self) -> None:
+        """Clear conversation history without restarting MCP servers or the LLM client."""
         self.history.clear()
         self._event("host", "history_cleared", {})
 
     def run_turn(self, user_text: str) -> str:
+        """Run one bounded LLM/tool loop and commit only a complete assistant turn."""
         try:
             self.history.begin_turn(user_text)
             registered_tools = self.manager.list_tools()
@@ -108,6 +121,9 @@ class ChatOrchestrator:
                 },
             )
             tool_round = 0
+            # One loop iteration is one provider request.  ``tool_round`` counts
+            # completed MCP result batches, so the initial text request is round 0
+            # and cannot accidentally consume the configured tool-round budget.
             while True:
                 self._event(
                     "llm",
@@ -173,6 +189,9 @@ class ChatOrchestrator:
                     # completed mutation is never discarded from local context.
                     self.history.reserve(3)
                     self.history.append_assistant(list(response.content))
+                    # A comprehension is intentionally used only as a compact
+                    # sequential loop: manager invocations are not parallelized,
+                    # preserving provider order and deterministic mutable effects.
                     results = [
                         self._execute_tool(block, round_number=tool_round + 1)
                         for block in tool_calls
@@ -181,6 +200,9 @@ class ChatOrchestrator:
                     tool_round += 1
                     continue
 
+                # A response without tool calls is the terminal assistant message.
+                # Stop reasons are allowlisted before its content enters history so
+                # provider-specific or malformed states cannot silently close a turn.
                 if response.stop_reason == "tool_use":
                     raise ChatError(
                         "The LLM provider stopped for tool use without requesting "
@@ -246,6 +268,7 @@ class ChatOrchestrator:
         *,
         round_number: int,
     ) -> dict[str, JsonValue]:
+        """Route one validated call, enforcing confirmation before mutable tools."""
         tool_use_id = block["id"]
         tool_name = block["name"]
         arguments = block["input"]
@@ -339,6 +362,7 @@ class ChatOrchestrator:
         message: str,
         event_type: str,
     ) -> str:
+        """Terminate safely when a requested mutation is rejected or cannot execute."""
         self.history.reserve(3)
         self.history.append_assistant(list(response.content))
         results = [
@@ -358,10 +382,12 @@ class ChatOrchestrator:
         event_type: str,
         payload: dict[str, JsonValue],
     ) -> None:
+        """Emit a bounded orchestration event through the optional session logger."""
         if self.protocol_logger is not None:
             self.protocol_logger.orchestrator_event(category, event_type, payload)
 
     def _close_failed_history(self) -> None:
+        """Release failed history without leaking owned resources."""
         if self.history.active_turn_has_tool_results:
             try:
                 self.history.append_assistant(
@@ -383,6 +409,7 @@ class ChatOrchestrator:
 
 
 def _tool_calls(response: LLMResponse) -> list[dict[str, JsonValue]]:
+    """Extract tool-use blocks while preserving their provider correlation fields."""
     return [
         deepcopy(block)
         for block in response.content
@@ -391,12 +418,14 @@ def _tool_calls(response: LLMResponse) -> list[dict[str, JsonValue]]:
 
 
 def _validate_tool_ids(blocks: list[dict[str, JsonValue]]) -> None:
+    """Validate tool ids and raise a controlled error on violation."""
     ids = [block.get("id") for block in blocks]
     if len(ids) != len(set(ids)):
         raise ChatError("The LLM provider returned duplicate tool identifiers.")
 
 
 def _text_content(response: LLMResponse) -> str:
+    """Join nonempty assistant text blocks into the user-visible final answer."""
     return "\n".join(
         block["text"]
         for block in response.content
@@ -410,6 +439,7 @@ def _tool_result(
     *,
     is_error: bool,
 ) -> dict[str, JsonValue]:
+    """Create a correlated tool-result block with JSON-safe bounded content."""
     if not isinstance(tool_use_id, str):
         raise ChatError("Tool request identifier is invalid.")
     result: dict[str, JsonValue] = {
@@ -423,6 +453,7 @@ def _tool_result(
 
 
 def _confirmation_accepted(value: object) -> bool:
+    """Require an explicit truthy confirmation value; absence and rejection are false."""
     if not isinstance(value, str):
         return False
     normalized = "".join(
@@ -434,6 +465,7 @@ def _confirmation_accepted(value: object) -> bool:
 
 
 def _limit(value: object, name: str, minimum: int, maximum: int) -> None:
+    """Validate an integer orchestration bound while excluding booleans."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)

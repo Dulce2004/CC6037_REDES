@@ -1,4 +1,9 @@
-"""Interfaz interactiva de terminal para el cliente MCP local."""
+"""Interfaz interactiva de terminal para el cliente MCP local.
+
+Orquesta un menú educativo sobre el cliente en memoria y presenta resultados sin
+saltarse ``initialize`` ni ``notifications/initialized``. La entrada se valida antes
+de llegar al servidor y los errores controlados se muestran sin traceback. Su único
+efecto persistente posible proviene de las tools invocadas explícitamente."""
 
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ def main() -> None:
 
 
 def _initialize(client: PharmacyMCPClient) -> None:
+    """Start initialize and establish its required lifecycle state."""
     response = client.initialize()
     if isinstance(response, ClientError):
         print(response)
@@ -58,6 +64,7 @@ def _initialize(client: PharmacyMCPClient) -> None:
 
 
 def _list_tools(client: PharmacyMCPClient) -> None:
+    """Return tools while preserving stable ordering and ownership."""
     tools = client.list_tools()
     if isinstance(tools, ClientError):
         print(tools)
@@ -72,6 +79,7 @@ def _list_tools(client: PharmacyMCPClient) -> None:
 
 
 def _assess_symptoms(client: PharmacyMCPClient) -> None:
+    """Collect simulated symptom input and invoke the assessment tool through the client."""
     try:
         symptoms = input("Describe the symptoms: ").strip()
         age_text = input("Age in years (optional): ").strip()
@@ -98,6 +106,7 @@ def _assess_symptoms(client: PharmacyMCPClient) -> None:
 
 
 def _print_tool_result(result: JsonValue) -> None:
+    """Render one MCP text result for the terminal without interpreting it as commands."""
     if not isinstance(result, dict) or not isinstance(result.get("content"), list):
         print("The tool returned an unsupported result.")
         return

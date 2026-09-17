@@ -1,4 +1,9 @@
-"""Small, synchronous client for Anthropic's Messages HTTP API."""
+"""Small synchronous client for Anthropic's Messages HTTP API.
+
+The module validates environment-derived settings, translates provider-neutral chat
+history and performs one bounded non-streaming request through an injectable
+transport. Credentials stay in headers only and safe errors never include response
+bodies or keys. Network activity occurs only when ``create_message`` is called."""
 
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ class AnthropicAPIError(LLMAPIError):
         status: int | None = None,
         request_id: str | None = None,
     ) -> None:
+        """Capture a sanitized provider failure and optional safe request identifier."""
         suffix = f" (request ID: {request_id})" if request_id else ""
         super().__init__(f"{message}{suffix}")
         self.status = status
@@ -61,6 +67,7 @@ class AnthropicSettings:
     max_response_bytes: int = DEFAULT_MAX_HTTP_RESPONSE_BYTES
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed anthropic settings invariants."""
         if not isinstance(self.api_key, str) or not self.api_key.strip():
             raise AnthropicConfigurationError(
                 "ANTHROPIC_API_KEY is required for the chat command."
@@ -96,6 +103,7 @@ class AnthropicSettings:
 
     @property
     def endpoint(self) -> str:
+        """Return the validated Messages API endpoint without credentials."""
         parsed = urlsplit(self.base_url)
         path = parsed.path.rstrip("/")
         if path.endswith("/v1/messages"):
@@ -143,6 +151,7 @@ class AnthropicSettings:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HTTPRequest:
+    """Hold the validated httprequest data exchanged by this module."""
     method: str
     url: str
     headers: Mapping[str, str] = field(repr=False)
@@ -153,6 +162,7 @@ class HTTPRequest:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HTTPResponse:
+    """Hold the validated httpresponse data exchanged by this module."""
     status: int
     headers: Mapping[str, str]
     body: bytes = field(repr=False)
@@ -161,6 +171,7 @@ class HTTPResponse:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnthropicMessage:
+    """Coordinate anthropic message state while preserving this module's lifecycle invariants."""
     message_id: str
     content: tuple[dict[str, JsonValue], ...]
     stop_reason: str
@@ -168,9 +179,11 @@ class AnthropicMessage:
 
     @property
     def log_metadata(self) -> Mapping[str, JsonValue]:
+        """Return immutable provider metadata safe for structured protocol logs."""
         return MappingProxyType({})
 
     def assistant_message(self) -> dict[str, JsonValue]:
+        """Return a defensive assistant message suitable for conversation history."""
         return {
             "role": "assistant",
             "content": deepcopy(list(self.content)),
@@ -184,6 +197,7 @@ class UrllibHTTPTransport:
     """Bounded urllib transport. It performs one request and never retries."""
 
     def __call__(self, request: HTTPRequest) -> HTTPResponse:
+        """Execute the callable urllib httptransport contract and return its bounded result."""
         raw_request = urllib.request.Request(
             request.url,
             data=request.body,
@@ -240,6 +254,7 @@ class AnthropicMessagesClient:
         *,
         transport: HTTPTransport | None = None,
     ) -> None:
+        """Bind validated settings and an injectable bounded HTTPS transport."""
         if not isinstance(settings, AnthropicSettings):
             raise TypeError("'settings' must be AnthropicSettings.")
         self.settings = settings
@@ -247,20 +262,24 @@ class AnthropicMessagesClient:
 
     @property
     def provider_name(self) -> str:
+        """Return the stable provider identifier used by the host UI and logs."""
         return "anthropic"
 
     @property
     def model_name(self) -> str:
+        """Return the configured Anthropic model name."""
         return self.settings.model
 
     @property
     def max_tool_rounds(self) -> int:
+        """Return the configured upper bound for one orchestrated tool loop."""
         return self.settings.max_tool_rounds
 
     def prepare_tools(
         self,
         tools: Iterable[RegisteredTool],
     ) -> list[dict[str, JsonValue]]:
+        """Transform tools into its safe canonical form."""
         return tools_for_anthropic(tools)
 
     def create_message(
@@ -270,6 +289,7 @@ class AnthropicMessagesClient:
         tools: list[dict[str, JsonValue]] | None = None,
         system: str | None = None,
     ) -> AnthropicMessage:
+        """Build message from validated inputs."""
         payload: dict[str, JsonValue] = {
             "model": self.settings.model,
             "max_tokens": self.settings.max_tokens,
@@ -349,6 +369,7 @@ def _parse_message(
     *,
     request_id: str | None,
 ) -> AnthropicMessage:
+    """Parse message into the module's validated representation."""
     if not isinstance(value, dict):
         raise AnthropicAPIError(
             "Anthropic returned a malformed message.", request_id=request_id
@@ -483,6 +504,7 @@ def _messages_for_anthropic(
 
 
 def _decode_json(body: bytes, *, request_id: str | None) -> JsonValue:
+    """Parse json into the module's validated representation."""
     try:
         return json.loads(body.decode("utf-8"), parse_constant=_reject_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -496,6 +518,7 @@ def _http_error(
     *,
     request_id: str | None,
 ) -> AnthropicAPIError:
+    """Map an HTTP status to a bounded provider error without response secrets."""
     labels = {
         401: "Anthropic authentication failed.",
         403: "Anthropic denied access to the requested resource.",
@@ -523,6 +546,7 @@ def _http_error(
 
 
 def _validate_base_url(value: object) -> str:
+    """Validate base url and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip() or len(value) > 2_048:
         raise AnthropicConfigurationError(
             "ANTHROPIC_BASE_URL must be a non-empty URL."
@@ -553,6 +577,7 @@ def _validate_base_url(value: object) -> str:
 def _environment_integer(
     environ: Mapping[str, str], name: str, default: int
 ) -> int:
+    """Read one bounded integer setting without inspecting unrelated variables."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -565,6 +590,7 @@ def _environment_integer(
 def _environment_float(
     environ: Mapping[str, str], name: str, default: float
 ) -> float:
+    """Read one bounded finite floating-point setting or use its default."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -575,6 +601,7 @@ def _environment_float(
 
 
 def _validate_integer(value: object, name: str, minimum: int, maximum: int) -> None:
+    """Validate integer and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -589,6 +616,7 @@ def _validate_integer(value: object, name: str, minimum: int, maximum: int) -> N
 def _validate_number(
     value: object, name: str, minimum: float, maximum: float
 ) -> None:
+    """Validate number and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -602,6 +630,7 @@ def _validate_number(
 
 
 def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
+    """Read at most ``maximum`` response bytes and flag a truncated body."""
     body = stream.read(maximum + 1)
     if not isinstance(body, bytes):
         raise AnthropicAPIError("Anthropic returned a non-binary HTTP body.")
@@ -609,6 +638,7 @@ def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Look up one response header case-insensitively without mutating the mapping."""
     for key, value in headers.items():
         if key.casefold() == name.casefold() and isinstance(value, str):
             return _safe_request_id(value)
@@ -616,6 +646,7 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
 
 
 def _safe_request_id(value: str) -> str | None:
+    """Accept a short visible identifier and discard unsafe diagnostic text."""
     candidate = value.strip()
     if re.fullmatch(r"[A-Za-z0-9._:-]{1,200}", candidate):
         return candidate
@@ -623,4 +654,5 @@ def _safe_request_id(value: str) -> str | None:
 
 
 def _reject_constant(value: str) -> None:
+    """Validate constant and raise a controlled error on violation."""
     raise ValueError(f"Invalid JSON constant: {value}")

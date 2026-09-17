@@ -1,4 +1,9 @@
-"""Provider-neutral contracts for the terminal chatbot."""
+"""Provider-neutral contracts for terminal and web chat frontends.
+
+Protocols define the minimal response and client surface consumed by the shared tool
+loop, keeping Gemini and Anthropic details outside orchestration. Provider selection
+reads only ``LLM_PROVIDER`` and never touches credentials. The module declares
+contracts and constants only and has no I/O side effects."""
 
 from __future__ import annotations
 
@@ -29,25 +34,40 @@ class LLMResponse(Protocol):
     request_id: str | None
 
     @property
-    def log_metadata(self) -> Mapping[str, JsonValue]: ...
+    def log_metadata(self) -> Mapping[str, JsonValue]:
+        """Return bounded provider metadata that is safe for protocol logging."""
+
+        ...
 
 
 class LLMClient(Protocol):
     """Small interface implemented by every supported chat provider."""
 
     @property
-    def provider_name(self) -> str: ...
+    def provider_name(self) -> str:
+        """Return the stable provider identifier exposed by host status views."""
+
+        ...
 
     @property
-    def model_name(self) -> str: ...
+    def model_name(self) -> str:
+        """Return the configured model name without exposing credentials."""
+
+        ...
 
     @property
-    def max_tool_rounds(self) -> int: ...
+    def max_tool_rounds(self) -> int:
+        """Return the provider-side ceiling used by the shared tool loop."""
+
+        ...
 
     def prepare_tools(
         self,
         tools: Iterable[RegisteredTool],
-    ) -> list[dict[str, JsonValue]]: ...
+    ) -> list[dict[str, JsonValue]]:
+        """Convert registered MCP tools into the selected provider's schema."""
+
+        ...
 
     def create_message(
         self,
@@ -55,7 +75,10 @@ class LLMClient(Protocol):
         messages: list[dict[str, JsonValue]],
         tools: list[dict[str, JsonValue]] | None = None,
         system: str | None = None,
-    ) -> LLMResponse: ...
+    ) -> LLMResponse:
+        """Perform one bounded provider request and normalize its response."""
+
+        ...
 
 
 def provider_from_environ(environ: Mapping[str, str]) -> str:

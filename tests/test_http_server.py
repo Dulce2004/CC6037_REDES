@@ -39,7 +39,9 @@ TOOL_NAMES = [
 
 
 class PharmacyHTTPServerTests(unittest.TestCase):
+    """Group regression checks for pharmacy httpserver behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime = PROJECT_DIRECTORY / "runtime"
         runtime.mkdir(exist_ok=True)
         self.database_path = runtime / f"http-test-{uuid4().hex}.sqlite3"
@@ -68,6 +70,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.thread.start()
 
     def tearDown(self) -> None:
+        """Release every process, socket, file, and fixture owned by the test."""
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=3)
@@ -77,6 +80,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
 
     @property
     def address(self) -> tuple[str, int]:
+        """Support the controlled test scenario for address."""
         host, port = self.server.server_address[:2]
         return str(host), int(port)
 
@@ -87,6 +91,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         body: bytes = b"",
         headers: dict[str, str] | None = None,
     ) -> tuple[int, dict[str, str], bytes]:
+        """Support the controlled test scenario for exchange."""
         connection = http.client.HTTPConnection(*self.address, timeout=3)
         try:
             connection.request(method, path, body=body, headers=headers or {})
@@ -107,6 +112,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         content_type: str = "application/json; charset=utf-8",
         accept: str = "application/json, text/event-stream",
     ) -> tuple[int, dict[str, str], bytes]:
+        """Support the controlled test scenario for post."""
         body = value if isinstance(value, bytes) else json.dumps(value).encode("utf-8")
         headers = {"Content-Type": content_type, "Accept": accept}
         if token is not None:
@@ -120,6 +126,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         return self.exchange("POST", MCP_ENDPOINT, body, headers)
 
     def initialize(self, *, origin: str | None = None) -> str:
+        """Support the controlled test scenario for initialize."""
         status, headers, body = self.post(
             {
                 "jsonrpc": "2.0",
@@ -143,6 +150,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         return session_id
 
     def initialize_ready(self) -> str:
+        """Support the controlled test scenario for initialize ready."""
         session_id = self.initialize()
         status, _, body = self.post(
             {
@@ -162,6 +170,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         params: dict[str, object],
         request_id: int,
     ) -> dict[str, object]:
+        """Support the controlled test scenario for request."""
         status, _, body = self.post(
             {
                 "jsonrpc": "2.0",
@@ -181,6 +190,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         arguments: dict[str, object],
         request_id: int,
     ) -> dict[str, object]:
+        """Support the controlled test scenario for call tool."""
         return self.request(
             session_id,
             "tools/call",
@@ -189,6 +199,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         )
 
     def test_start_health_initialize_notification_list_and_call(self) -> None:
+        """Regression check: start health initialize notification list and call."""
         status, headers, body = self.exchange("GET", "/health")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body), {"status": "ok"})
@@ -213,6 +224,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         )
 
     def test_all_seven_tools_form_one_http_workflow(self) -> None:
+        """Regression check: all seven tools form one http workflow."""
         session_id = self.initialize_ready()
         listed = self.request(session_id, "tools/list", {}, 2)
         self.assertEqual(len(listed["result"]["tools"]), 7)
@@ -264,6 +276,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         )
 
     def test_sessions_are_independent_and_delete_ends_only_one(self) -> None:
+        """Regression check: sessions are independent and delete ends only one."""
         first = self.initialize_ready()
         second = self.initialize_ready()
         self.assertNotEqual(first, second)
@@ -287,6 +300,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(len(response["result"]["tools"]), 7)
 
     def test_missing_unknown_deleted_and_expired_sessions_are_rejected(self) -> None:
+        """Regression check: missing unknown deleted and expired sessions are rejected."""
         message = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         status, _, _ = self.post(message)
         self.assertEqual(status, 400)
@@ -312,6 +326,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_protocol_header_and_second_initialize_are_validated(self) -> None:
+        """Regression check: protocol header and second initialize are validated."""
         session_id = self.initialize_ready()
         message = {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
         self.assertEqual(self.post(message, session_id=session_id, protocol=None)[0], 400)
@@ -333,6 +348,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["error"]["code"], -32600)
 
     def test_invalid_json_invalid_request_and_notification_semantics(self) -> None:
+        """Regression check: invalid json invalid request and notification semantics."""
         status, _, body = self.post(b"{")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["error"]["code"], -32700)
@@ -362,6 +378,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual((status, body), (202, b""))
 
     def test_methods_content_type_and_accept_are_strict(self) -> None:
+        """Regression check: methods content type and accept are strict."""
         auth = {"Authorization": f"Bearer {TOKEN}"}
         status, headers, body = self.exchange("GET", MCP_ENDPOINT, headers=auth)
         self.assertEqual(status, 405)
@@ -374,6 +391,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(self.post(initialize, accept="application/json")[0], 406)
 
     def test_origin_and_bearer_are_enforced_without_disclosure(self) -> None:
+        """Regression check: origin and bearer are enforced without disclosure."""
         self.assertTrue(self.initialize(origin=ORIGIN))
         initialize = {
             "jsonrpc": "2.0",
@@ -394,11 +412,13 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertNotIn(b"wrong-token", body)
 
     def test_request_size_and_utf8_are_bounded(self) -> None:
+        """Regression check: request size and utf8 are bounded."""
         oversized = b"{" + b" " * 8_192 + b"}"
         self.assertEqual(self.post(oversized)[0], 413)
         self.assertEqual(self.post(b"\xff")[0], 400)
 
     def test_session_capacity_is_bounded(self) -> None:
+        """Regression check: session capacity is bounded."""
         sessions = [self.initialize() for _ in range(4)]
         self.assertEqual(len(set(sessions)), 4)
         initialize = {
@@ -414,6 +434,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         self.assertEqual(self.post(initialize, protocol=None)[0], 503)
 
     def test_failed_order_rolls_back_and_concurrent_orders_do_not_oversell(self) -> None:
+        """Regression check: failed order rolls back and concurrent orders do not oversell."""
         session_id = self.initialize_ready()
         failed = self.call_tool(
             session_id,
@@ -444,6 +465,7 @@ class PharmacyHTTPServerTests(unittest.TestCase):
         results: list[dict[str, object]] = []
 
         def order(active_session: str, request_id: int) -> None:
+            """Support the controlled test scenario for order."""
             barrier.wait(timeout=3)
             results.append(
                 self.call_tool(
@@ -484,7 +506,9 @@ class PharmacyHTTPServerTests(unittest.TestCase):
 
 
 class PharmacyHTTPSettingsTests(unittest.TestCase):
+    """Group regression checks for pharmacy httpsettings behavior and boundaries."""
     def test_no_auth_is_loopback_only_without_explicit_unsafe_override(self) -> None:
+        """Regression check: no auth is loopback only without explicit unsafe override."""
         PharmacyHTTPSettings(host="localhost", token=None)
         with self.assertRaisesRegex(PharmacyHTTPConfigurationError, "Bearer token"):
             PharmacyHTTPSettings(host="0.0.0.0", token=None)
@@ -495,6 +519,7 @@ class PharmacyHTTPSettingsTests(unittest.TestCase):
         )
 
     def test_environment_configuration_never_exposes_token_in_repr(self) -> None:
+        """Regression check: environment configuration never exposes token in repr."""
         settings = PharmacyHTTPSettings.from_environ(
             {
                 "HOST": "127.0.0.1",

@@ -29,7 +29,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class AnthropicSettingsTests(unittest.TestCase):
+    """Group regression checks for anthropic settings behavior and boundaries."""
     def test_required_values_and_repr_do_not_expose_credentials(self) -> None:
+        """Regression check: required values and repr do not expose credentials."""
         with self.assertRaisesRegex(AnthropicConfigurationError, "API_KEY"):
             AnthropicSettings.from_environ({"ANTHROPIC_MODEL": "test-model"})
         with self.assertRaisesRegex(AnthropicConfigurationError, "MODEL"):
@@ -40,6 +42,7 @@ class AnthropicSettingsTests(unittest.TestCase):
         self.assertNotIn(credential, repr(settings))
 
     def test_environment_values_and_ranges_are_validated(self) -> None:
+        """Regression check: environment values and ranges are validated."""
         base = {
             "ANTHROPIC_API_KEY": "present",
             "ANTHROPIC_MODEL": "test-model",
@@ -66,6 +69,7 @@ class AnthropicSettingsTests(unittest.TestCase):
                     AnthropicSettings.from_environ(invalid)
 
     def test_endpoint_requires_https_except_explicit_local_simulators(self) -> None:
+        """Regression check: endpoint requires https except explicit local simulators."""
         for url in (
             "http://example.com",
             "ftp://localhost",
@@ -97,7 +101,9 @@ class AnthropicSettingsTests(unittest.TestCase):
 
 
 class AnthropicMessagesClientTests(unittest.TestCase):
+    """Group regression checks for anthropic messages client behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.credential = f"unit-{uuid4().hex}"
         self.settings = AnthropicSettings(
             api_key=self.credential,
@@ -107,6 +113,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
         )
 
     def test_builds_expected_post_headers_and_json_without_mutating_inputs(self) -> None:
+        """Regression check: builds expected post headers and json without mutating inputs."""
         transport = _RecordingTransport(_valid_response("Hola"))
         client = AnthropicMessagesClient(self.settings, transport=transport)
         messages = [{"role": "user", "content": "Hola"}]
@@ -144,6 +151,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
         self.assertEqual(response.content[0]["text"], "Hola")
 
     def test_invalid_json_and_missing_required_fields_are_safe_errors(self) -> None:
+        """Regression check: invalid json and missing required fields are safe errors."""
         for body in (
             b"not-json",
             json.dumps({"type": "message", "role": "assistant"}).encode(),
@@ -169,6 +177,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
                 self.assertNotIn(self.credential, str(context.exception))
 
     def test_http_statuses_are_classified_and_request_id_is_preserved(self) -> None:
+        """Regression check: http statuses are classified and request id is preserved."""
         for status, expected in (
             (401, "authentication"),
             (403, "denied"),
@@ -224,6 +233,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
         self.assertIsNone(unsafe_context.exception.request_id)
 
     def test_timeout_connection_failure_and_oversized_body_are_bounded(self) -> None:
+        """Regression check: timeout connection failure and oversized body are bounded."""
         for failure, expected in (
             (TimeoutError(), "timed out"),
             (socket.timeout(), "timed out"),
@@ -252,6 +262,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
             client.create_message(messages=[])
 
     def test_default_transport_closes_success_response(self) -> None:
+        """Regression check: default transport closes success response."""
         response = _ClosableResponse(_valid_response("ok").body)
         with patch("urllib.request.urlopen", return_value=response):
             result = UrllibHTTPTransport()(
@@ -261,6 +272,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
         self.assertTrue(response.closed_by_client)
 
     def test_default_transport_closes_http_error_response(self) -> None:
+        """Regression check: default transport closes http error response."""
         body = io.BytesIO(b'{"error":{"message":"denied"}}')
         error = urllib.error.HTTPError(
             "https://api.anthropic.com/v1/messages",
@@ -277,6 +289,7 @@ class AnthropicMessagesClientTests(unittest.TestCase):
         self.assertTrue(body.closed)
 
     def test_injected_transport_must_return_a_valid_response_object(self) -> None:
+        """Regression check: injected transport must return a valid response object."""
         client = AnthropicMessagesClient(
             self.settings,
             transport=lambda request: None,
@@ -286,39 +299,50 @@ class AnthropicMessagesClientTests(unittest.TestCase):
 
 
 class _RecordingTransport:
+    """Provide a deterministic recording transport test double for isolated scenarios."""
     def __init__(self, response: HTTPResponse) -> None:
+        """Support the controlled test scenario for init."""
         self.response = response
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         return self.response
 
 
 class _RaisingTransport:
+    """Provide a deterministic raising transport test double for isolated scenarios."""
     def __init__(self, failure: Exception) -> None:
+        """Support the controlled test scenario for init."""
         self.failure = failure
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         raise self.failure
 
 
 class _ClosableResponse:
+    """Provide a deterministic closable response test double for isolated scenarios."""
     status = 200
     headers = MappingProxyType({"request-id": "req"})
 
     def __init__(self, body: bytes) -> None:
+        """Support the controlled test scenario for init."""
         self._body = io.BytesIO(body)
         self.closed_by_client = False
 
     def read(self, size: int) -> bytes:
+        """Support the controlled test scenario for read."""
         return self._body.read(size)
 
     def close(self) -> None:
+        """Support the controlled test scenario for close."""
         self.closed_by_client = True
 
 
 def _valid_response(text: str) -> HTTPResponse:
+    """Support the controlled test scenario for valid response."""
     return HTTPResponse(
         status=200,
         headers={"request-id": "req-test"},
@@ -338,6 +362,7 @@ def _valid_response(text: str) -> HTTPResponse:
 
 
 def _request_for_transport(credential: str):
+    """Support the controlled test scenario for request for transport."""
     from pharmacy_mcp.host import HTTPRequest
 
     return HTTPRequest(

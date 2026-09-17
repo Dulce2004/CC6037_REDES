@@ -18,8 +18,10 @@ from pharmacy_mcp.server.http import (  # noqa: E402
 
 
 class PharmacyContainerArtifactTests(unittest.TestCase):
+    """Group regression checks for pharmacy container artifact behavior and boundaries."""
     @classmethod
     def setUpClass(cls) -> None:
+        """Support the controlled test scenario for set up class."""
         cls.dockerfile_path = PROJECT_DIRECTORY / "Dockerfile"
         cls.dockerignore_path = PROJECT_DIRECTORY / ".dockerignore"
         cls.guide_path = PROJECT_DIRECTORY / "docs" / "container-cloud-run-guide.md"
@@ -28,11 +30,13 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         cls.guide = cls.guide_path.read_text(encoding="utf-8")
 
     def test_required_artifacts_exist(self) -> None:
+        """Regression check: required artifacts exist."""
         self.assertTrue(self.dockerfile_path.is_file())
         self.assertTrue(self.dockerignore_path.is_file())
         self.assertTrue(self.guide_path.is_file())
 
     def test_base_image_is_versioned_official_python_slim(self) -> None:
+        """Regression check: base image is versioned official python slim."""
         first_instruction = next(
             line.strip()
             for line in self.dockerfile.splitlines()
@@ -42,6 +46,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         self.assertNotIn(":latest", first_instruction)
 
     def test_runtime_environment_and_command_match_cloud_run_contract(self) -> None:
+        """Regression check: runtime environment and command match cloud run contract."""
         self.assertIn("PYTHONPATH=/app/src", self.dockerfile)
         self.assertIn("PYTHONDONTWRITEBYTECODE=1", self.dockerfile)
         self.assertIn("PYTHONUNBUFFERED=1", self.dockerfile)
@@ -55,11 +60,13 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         )
 
     def test_container_runs_as_a_dedicated_non_root_user(self) -> None:
+        """Regression check: container runs as a dedicated non root user."""
         self.assertIn("useradd", self.dockerfile)
         self.assertRegex(self.dockerfile, r"(?m)^USER 10001:10001$")
         self.assertNotRegex(self.dockerfile, r"(?m)^USER\s+(?:root|0)(?::0)?$")
 
     def test_image_copies_only_pharmacy_http_runtime_components(self) -> None:
+        """Regression check: image copies only pharmacy http runtime components."""
         copy_lines = [
             line.strip()
             for line in self.dockerfile.splitlines()
@@ -78,6 +85,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
             self.assertNotRegex(combined, rf"(?:^|/)({re.escape(excluded)})(?:/|\s|$)")
 
     def test_image_installs_no_external_server_or_sdk(self) -> None:
+        """Regression check: image installs no external server or sdk."""
         normalized = self.dockerfile.casefold()
         for forbidden in (
             "pip install",
@@ -96,6 +104,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
             self.assertNotIn(forbidden, normalized)
 
     def test_dockerignore_excludes_local_and_sensitive_artifacts(self) -> None:
+        """Regression check: dockerignore excludes local and sensitive artifacts."""
         required_patterns = {
             ".git/",
             ".gitignore",
@@ -125,6 +134,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         self.assertTrue(required_patterns.issubset(patterns))
 
     def test_required_pharmacy_json_is_not_excluded(self) -> None:
+        """Regression check: required pharmacy json is not excluded."""
         normalized = self.dockerignore.casefold()
         for name in (
             "branches.json",
@@ -136,6 +146,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         self.assertNotIn("src/pharmacy_mcp/pharmacy/data", normalized)
 
     def test_container_contains_no_secret_or_personal_build_setting(self) -> None:
+        """Regression check: container contains no secret or personal build setting."""
         self.assertNotRegex(
             self.dockerfile,
             r"(?im)^(?:ARG|ENV)\s+.*(?:TOKEN|API_KEY|SECRET)\s*=",
@@ -144,6 +155,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
         self.assertNotRegex(self.dockerfile, r"(?i)[A-Z]:\\|/Users/|/home/[A-Za-z]")
 
     def test_public_bind_without_token_remains_rejected(self) -> None:
+        """Regression check: public bind without token remains rejected."""
         with self.assertRaisesRegex(PharmacyHTTPConfigurationError, "Bearer token"):
             PharmacyHTTPSettings.from_environ(
                 {
@@ -154,6 +166,7 @@ class PharmacyContainerArtifactTests(unittest.TestCase):
             )
 
     def test_documentation_covers_safe_local_and_future_cloud_operation(self) -> None:
+        """Regression check: documentation covers safe local and future cloud operation."""
         normalized_guide = self.guide.casefold()
         required_phrases = (
             "docker build -t pharmacy-mcp-http:local .",

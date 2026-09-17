@@ -1088,10 +1088,12 @@ on stderr and cause process exit code `1`.
 
 - The server accepts only MCP protocol version `2025-11-25` during
   initialization.
-- The available process transport is local stdio with UTF-8 NDJSON framing. The
-  in-memory Python client remains available, but there is no HTTP transport.
-- Requests are processed synchronously and sequentially; concurrent execution is
-  not implemented.
+- The direct in-memory client, local stdio transport with UTF-8 NDJSON framing,
+  and the JSON-response subset of MCP Streamable HTTP are available. SSE and
+  resumability are not implemented.
+- Stdio and requests within one HTTP session are processed synchronously and
+  sequentially. Different HTTP sessions may execute concurrently and retain
+  independent server/SQLite state.
 - Only the tools capability is declared. Resources, prompts, roots, sampling,
   elicitation, tasks, subscriptions, cancellation, progress, and protocol
   logging are not implemented.
@@ -1105,8 +1107,10 @@ on stderr and cause process exit code `1`.
 - Runtime validation covers the checks documented above but is not a complete
   JSON Schema validator.
 - JSON-RPC batches and multi-line JSON messages are unsupported.
-- Natural-language assessment uses only controlled phrase matching; there is no
-  LLM interpretation, HTTP endpoint, remote server, or network authentication.
+- Natural-language assessment inside the Pharmacy server uses only controlled
+  phrase matching and never delegates medical interpretation to an LLM. The HTTP
+  transport can require a Bearer token and Origin allowlist, but these controls
+  are not a production identity system.
 - Orders currently have only the `created` status. Payment, fulfillment,
   cancellation, delivery, and inventory restoration are not implemented.
 - Prescription references receive format-only simulated validation and must

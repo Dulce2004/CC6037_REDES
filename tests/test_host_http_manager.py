@@ -28,7 +28,9 @@ from pharmacy_mcp.server.http import (  # noqa: E402
 
 
 class MixedTransportManagerTests(unittest.TestCase):
+    """Group regression checks for mixed transport manager behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime = PROJECT_DIRECTORY / "runtime"
         runtime.mkdir(exist_ok=True)
         unique = uuid4().hex
@@ -58,6 +60,7 @@ class MixedTransportManagerTests(unittest.TestCase):
         self.managers: list[MCPServerManager] = []
 
     def tearDown(self) -> None:
+        """Release every process, socket, file, and fixture owned by the test."""
         for manager in reversed(self.managers):
             try:
                 manager.stop_all()
@@ -74,6 +77,7 @@ class MixedTransportManagerTests(unittest.TestCase):
                 Path(f"{database}{suffix}").unlink(missing_ok=True)
 
     def local_config(self) -> StdioServerConfig:
+        """Support the controlled test scenario for local config."""
         return StdioServerConfig(
             name="pharmacy",
             command=sys.executable,
@@ -89,6 +93,7 @@ class MixedTransportManagerTests(unittest.TestCase):
         )
 
     def remote_config(self, *, url: str | None = None) -> HTTPServerConfig:
+        """Support the controlled test scenario for remote config."""
         host, port = self.http_server.server_address[:2]
         return HTTPServerConfig(
             name="pharmacy-remote",
@@ -100,6 +105,7 @@ class MixedTransportManagerTests(unittest.TestCase):
         )
 
     def manager(self, remote: HTTPServerConfig) -> MCPServerManager:
+        """Support the controlled test scenario for manager."""
         manager = MCPServerManager(
             HostConfig(servers=(self.local_config(), remote)),
             protocol_logger=self.logger,
@@ -108,6 +114,7 @@ class MixedTransportManagerTests(unittest.TestCase):
         return manager
 
     def test_mixed_manager_registers_and_routes_both_namespaces(self) -> None:
+        """Regression check: mixed manager registers and routes both namespaces."""
         manager = self.manager(self.remote_config())
         manager.start_all()
 
@@ -134,6 +141,7 @@ class MixedTransportManagerTests(unittest.TestCase):
         self.assertIsNone(summaries["pharmacy-remote"].process_id)
 
     def test_unavailable_remote_preserves_local_server_and_tools(self) -> None:
+        """Regression check: unavailable remote preserves local server and tools."""
         manager = self.manager(
             self.remote_config(url="http://127.0.0.1:1/mcp")
         )

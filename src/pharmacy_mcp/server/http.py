@@ -1,4 +1,10 @@
-"""Manual MCP Streamable HTTP transport for the Pharmacy server."""
+"""Manual MCP Streamable HTTP transport for the Pharmacy server.
+
+The threaded server creates one independent MCP server per bounded session and accepts
+one JSON-RPC object per POST; SSE is intentionally unsupported. Strict media, origin,
+protocol, Bearer, UTF-8 and size checks protect the endpoint, while locks serialize
+requests within one session. Starting ``main`` binds a socket and each session owns
+SQLite-backed server state until DELETE, expiry or shutdown."""
 
 from __future__ import annotations
 
@@ -81,6 +87,7 @@ class PharmacyHTTPSettings:
     )
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed pharmacy httpsettings invariants."""
         if (
             not isinstance(self.host, str)
             or not self.host.strip()
@@ -159,6 +166,7 @@ class PharmacyHTTPSettings:
         cls,
         environ: Mapping[str, str],
     ) -> PharmacyHTTPSettings:
+        """Construct pharmacy httpsettings from validated environ."""
         if not isinstance(environ, Mapping):
             raise TypeError("'environ' must be a mapping.")
         raw_token = environ.get(TOKEN_ENVIRONMENT_VARIABLE)
@@ -214,6 +222,7 @@ class PharmacyHTTPSettings:
 
 @dataclass(slots=True)
 class _Session:
+    """Hold the validated session data exchanged by this module."""
     server: PharmacyMCPServer
     last_activity: float
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -230,6 +239,7 @@ class SessionRegistry:
         ttl_seconds: float,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """Create a bounded registry whose expiry clock is monotonic and injectable."""
         _validate_integer(maximum, "maximum", 1, 10_000)
         _validate_number(ttl_seconds, "ttl_seconds", 0.1, 86_400.0)
         self._maximum = maximum
@@ -240,11 +250,13 @@ class SessionRegistry:
 
     @property
     def active_count(self) -> int:
+        """Prune safely expired entries and return the remaining session count."""
         with self._lock:
             self._prune_locked()
             return len(self._sessions)
 
     def register(self, server: PharmacyMCPServer) -> str:
+        """Add one initialized server under an unguessable bounded session ID."""
         if not isinstance(server, PharmacyMCPServer):
             raise TypeError("'server' must be a PharmacyMCPServer instance.")
         with self._lock:
@@ -261,6 +273,7 @@ class SessionRegistry:
             return session_id
 
     def get(self, session_id: str) -> _Session | None:
+        """Return an active session and refresh its monotonic inactivity clock."""
         with self._lock:
             self._prune_locked()
             session = self._sessions.get(session_id)
@@ -270,17 +283,21 @@ class SessionRegistry:
             return None
 
     def delete(self, session_id: str) -> bool:
+        """Detach and close exactly one session without holding the registry lock."""
         with self._lock:
             self._prune_locked()
             session = self._sessions.pop(session_id, None)
             if session is None:
                 return False
             session.active = False
+        # Closing can touch SQLite and must not block unrelated registry lookups.
+        # The per-session lock still excludes an in-flight POST for this session.
         with session.lock:
             session.server.close()
         return True
 
     def close_all(self) -> None:
+        """Atomically detach every session, then close each owned server."""
         with self._lock:
             sessions = tuple(self._sessions.values())
             self._sessions.clear()
@@ -291,6 +308,7 @@ class SessionRegistry:
                 session.server.close()
 
     def _prune_locked(self) -> None:
+        """Close idle sessions only when their request lock can be acquired safely."""
         now = self._clock()
         expired = [
             session_id
@@ -299,6 +317,8 @@ class SessionRegistry:
         ]
         for session_id in expired:
             session = self._sessions[session_id]
+            # An active request is never expired underneath its handler.  A later
+            # registry operation will retry pruning after that request releases.
             if not session.lock.acquire(blocking=False):
                 continue
             try:
@@ -328,6 +348,7 @@ class PharmacyHTTPServer(ThreadingHTTPServer):
         diagnostic_stream: TextIO | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """Attach the session factory, limits and registry to a threaded HTTP listener."""
         self.settings = settings
         self.server_factory = server_factory
         self.diagnostic_stream = diagnostic_stream or sys.stderr
@@ -339,6 +360,7 @@ class PharmacyHTTPServer(ThreadingHTTPServer):
         super().__init__((settings.host, settings.port), PharmacyHTTPRequestHandler)
 
     def server_close(self) -> None:
+        """Close every owned MCP session before releasing the listening socket."""
         self.sessions.close_all()
         super().server_close()
 
@@ -352,16 +374,19 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
 
     @property
     def pharmacy_server(self) -> PharmacyHTTPServer:
+        """Return the typed shared server associated with this request handler."""
         assert isinstance(self.server, PharmacyHTTPServer)
         return self.server
 
     def setup(self) -> None:
+        """Initialize the base handler and impose a bounded socket read timeout."""
         super().setup()
         self.connection.settimeout(
             self.pharmacy_server.settings.request_timeout_seconds
         )
 
     def log_message(self, format: str, *args: object) -> None:
+        """Route access diagnostics to stderr without altering HTTP responses."""
         try:
             status = args[1] if len(args) > 1 else "unknown"
             self.pharmacy_server.diagnostic_stream.write(
@@ -372,12 +397,16 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self) -> None:
+        """Validate, drain and process one initialization, request or notification POST."""
         if self.path != MCP_ENDPOINT:
             if self._read_request_body() is None:
                 return
             self.close_connection = True
             self._json_error(HTTPStatus.NOT_FOUND, "Endpoint not found.")
             return
+        # Consume the framed body before early authentication/header rejection so a
+        # defensive connection close does not turn the intended HTTP error into a
+        # client-visible TCP reset on Windows.
         body = self._read_request_body()
         if body is None:
             return
@@ -420,6 +449,9 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         if session is None:
             self._json_error(HTTPStatus.NOT_FOUND, "MCP session not found.")
             return
+        # Requests for one MCP session are sequential because lifecycle and SQLite
+        # state are mutable.  Different sessions retain independent locks and may run
+        # concurrently in the threaded HTTP server.
         with session.lock:
             if not session.active:
                 self._json_error(HTTPStatus.NOT_FOUND, "MCP session not found.")
@@ -428,6 +460,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         self._write_server_result(result)
 
     def do_GET(self) -> None:
+        """Report the health endpoint; this server deliberately provides no SSE stream."""
         if not self._validate_origin():
             return
         if self.path == HEALTH_ENDPOINT:
@@ -441,6 +474,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         self._json_error(HTTPStatus.NOT_FOUND, "Endpoint not found.")
 
     def do_DELETE(self) -> None:
+        """Delete the session named by the validated MCP session header."""
         if self.path != MCP_ENDPOINT:
             self._json_error(HTTPStatus.NOT_FOUND, "Endpoint not found.")
             return
@@ -460,18 +494,23 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         self._write_empty(HTTPStatus.NO_CONTENT)
 
     def do_PUT(self) -> None:
+        """Reject PUT after consuming any declared request body."""
         self._unsupported_method()
 
     def do_PATCH(self) -> None:
+        """Reject PATCH after consuming any declared request body."""
         self._unsupported_method()
 
     def do_OPTIONS(self) -> None:
+        """Reject OPTIONS; cross-origin browser negotiation is not supported."""
         self._unsupported_method()
 
     def do_HEAD(self) -> None:
+        """Reject HEAD because only the explicit health GET is defined."""
         self._unsupported_method()
 
     def _unsupported_method(self) -> None:
+        """Drain a bounded body, advertise allowed methods and return HTTP 405."""
         if self.path == MCP_ENDPOINT:
             if not self._validate_origin() or not self._validate_authorization():
                 return
@@ -480,6 +519,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         self._json_error(HTTPStatus.NOT_FOUND, "Endpoint not found.")
 
     def _initialize_session(self, message: Request) -> None:
+        """Start session and establish its required lifecycle state."""
         protocol_header = self._single_header(PROTOCOL_HEADER)
         if protocol_header is False:
             return
@@ -520,12 +560,14 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         self,
         result: Response | ErrorResponse | None,
     ) -> None:
+        """Map a transport-independent result to HTTP 202 or a JSON-RPC response."""
         if result is None:
             self._write_empty(HTTPStatus.ACCEPTED)
         else:
             self._write_jsonrpc(result)
 
     def _validate_post_content_headers(self) -> bool:
+        """Validate post content headers and raise a controlled error on violation."""
         content_type = self._single_header("Content-Type")
         if content_type is False:
             return False
@@ -547,6 +589,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _read_request_body(self) -> bytes | None:
+        """Read request body under the module's validation and size limits."""
         transfer_encoding = self._single_header("Transfer-Encoding")
         if transfer_encoding is False:
             return None
@@ -573,6 +616,8 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
             self._json_error(HTTPStatus.BAD_REQUEST, "Content-Length is invalid.")
             return None
         if length > self.pharmacy_server.settings.max_request_bytes:
+            # Drain the declared frame before replying so the close is orderly; reads
+            # remain chunked and subject to the socket timeout.
             if not self._discard_request_body(length):
                 return None
             self.close_connection = True
@@ -611,6 +656,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _validate_origin(self) -> bool:
+        """Validate origin and raise a controlled error on violation."""
         origin = self._single_header("Origin")
         if origin is False:
             return False
@@ -622,6 +668,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _validate_authorization(self) -> bool:
+        """Validate authorization and raise a controlled error on violation."""
         expected_token = self.pharmacy_server.settings.token
         if expected_token is None:
             return True
@@ -631,6 +678,8 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         supplied = ""
         if isinstance(authorization, str) and authorization.startswith("Bearer "):
             supplied = authorization[len("Bearer ") :]
+        # Constant-time comparison avoids making partial token matches observable.
+        # The token and supplied Authorization value are never included in errors.
         if not hmac.compare_digest(supplied, expected_token):
             self._json_error(
                 HTTPStatus.UNAUTHORIZED,
@@ -641,6 +690,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _validate_protocol_header(self) -> bool:
+        """Validate protocol header and raise a controlled error on violation."""
         version = self._single_header(PROTOCOL_HEADER)
         if version is False:
             return False
@@ -653,6 +703,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _single_header(self, name: str) -> str | None | bool:
+        """Return one trimmed header, ``None`` if absent, or ``False`` if ambiguous."""
         values = self.headers.get_all(name, failobj=[])
         if len(values) > 1:
             self._json_error(HTTPStatus.BAD_REQUEST, f"Duplicate {name} header.")
@@ -660,6 +711,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         return values[0].strip() if values else None
 
     def _method_not_allowed(self) -> None:
+        """Return an empty 405 response with the server's exact method allow-list."""
         self._json_error(
             HTTPStatus.METHOD_NOT_ALLOWED,
             "Method not allowed.",
@@ -667,6 +719,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _jsonrpc_error(self, code: int, message: str) -> None:
+        """Return a canonical JSON-RPC error using a null correlation ID."""
         self._write_jsonrpc(
             ErrorResponse(error=ErrorObject(code=code, message=message), id=None)
         )
@@ -677,6 +730,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         *,
         session_id: str | None = None,
     ) -> None:
+        """Serialize a validated JSON-RPC object and write it as bounded JSON."""
         body = serialize_message(response).encode("utf-8")
         headers = {SESSION_HEADER: session_id} if session_id is not None else None
         self._write_bytes(
@@ -693,6 +747,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         *,
         headers: Mapping[str, str] | None = None,
     ) -> None:
+        """Encode a finite JSON object and enforce the configured response limit."""
         body = json.dumps(value, separators=(",", ":")).encode("utf-8")
         self._write_bytes(
             status,
@@ -708,9 +763,11 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         *,
         headers: Mapping[str, str] | None = None,
     ) -> None:
+        """Return a small structured HTTP error without internal exception details."""
         self._write_json(status, {"error": message}, headers=headers)
 
     def _write_empty(self, status: HTTPStatus) -> None:
+        """Write a zero-length response and close the connection when requested."""
         self._write_bytes(status, b"", content_type=None)
 
     def _write_bytes(
@@ -721,6 +778,7 @@ class PharmacyHTTPRequestHandler(BaseHTTPRequestHandler):
         content_type: str | None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
+        """Write status, security headers, exact length and an optional byte body."""
         self.send_response(int(status))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
@@ -785,10 +843,12 @@ def main() -> int:
 
 
 def _canonical_jsonrpc_message(code: int) -> str:
+    """Return the standard message associated with a supported JSON-RPC error code."""
     return "Parse error" if code == -32700 else "Invalid Request"
 
 
 def _is_json_content_type(value: str) -> bool:
+    """Accept JSON media type with no parameters or UTF-8 charset only."""
     segments = [segment.strip() for segment in value.split(";")]
     if not segments or segments[0].casefold() != "application/json":
         return False
@@ -804,6 +864,7 @@ def _is_json_content_type(value: str) -> bool:
 
 
 def _accepts_required_media(value: str) -> bool:
+    """Check whether the Accept list permits JSON or MCP event-stream responses."""
     accepted: set[str] = set()
     for entry in value.split(","):
         segments = [segment.strip() for segment in entry.split(";")]
@@ -822,6 +883,7 @@ def _accepts_required_media(value: str) -> bool:
 
 
 def _validate_origin(value: object) -> str:
+    """Validate origin and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip() or value == "*":
         raise PharmacyHTTPConfigurationError("Configured Origin is invalid.")
     candidate = value.strip()
@@ -840,6 +902,7 @@ def _validate_origin(value: object) -> str:
 
 
 def _is_loopback_host(value: str) -> bool:
+    """Recognize canonical localhost and loopback IP host spellings."""
     if value.casefold() == "localhost":
         return True
     try:
@@ -853,6 +916,7 @@ def _environment_integer(
     name: str,
     default: int,
 ) -> int:
+    """Read a bounded integer setting without exposing unrelated environment values."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -867,6 +931,7 @@ def _environment_float(
     name: str,
     default: float,
 ) -> float:
+    """Read a bounded finite floating-point setting from one named variable."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -881,6 +946,7 @@ def _environment_boolean(
     name: str,
     default: bool,
 ) -> bool:
+    """Read a strict true/false environment setting or use its safe default."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -890,6 +956,7 @@ def _environment_boolean(
 
 
 def _validate_integer(value: object, name: str, minimum: int, maximum: int) -> None:
+    """Validate integer and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -907,6 +974,7 @@ def _validate_number(
     minimum: float,
     maximum: float,
 ) -> None:
+    """Validate number and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))

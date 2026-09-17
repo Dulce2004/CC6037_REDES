@@ -27,7 +27,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class MCPProtocolLoggerTests(unittest.TestCase):
+    """Group regression checks for mcpprotocol logger behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         runtime_directory = PROJECT_DIRECTORY / "runtime"
         runtime_directory.mkdir(exist_ok=True)
         self.directory = runtime_directory / f"host-log-{uuid4().hex}"
@@ -36,12 +38,14 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.stderr = io.StringIO()
 
     def test_default_path_is_portable_and_ignored_runtime_location(self) -> None:
+        """Regression check: default path is portable and ignored runtime location."""
         self.assertEqual(
             DEFAULT_LOG_PATH,
             PROJECT_DIRECTORY / "runtime" / "mcp-host.jsonl",
         )
 
     def test_log_creates_parent_flushes_and_appends_valid_json_lines(self) -> None:
+        """Regression check: log creates parent flushes and appends valid json lines."""
         first = MCPProtocolLogger(
             self.log_path,
             diagnostic_stream=self.stderr,
@@ -75,6 +79,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
     def test_entry_has_utc_timestamp_server_transport_type_method_and_id(
         self,
     ) -> None:
+        """Regression check: entry has utc timestamp server transport type method and id."""
         with MCPProtocolLogger(
             self.log_path,
             diagnostic_stream=self.stderr,
@@ -99,6 +104,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
     def test_recursive_case_insensitive_redaction_does_not_mutate_payload(
         self,
     ) -> None:
+        """Regression check: recursive case insensitive redaction does not mutate payload."""
         payload = {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -154,6 +160,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
     def test_protocol_visualization_is_optional_and_diagnostics_are_sanitized(
         self,
     ) -> None:
+        """Regression check: protocol visualization is optional and diagnostics are sanitized."""
         with MCPProtocolLogger(
             self.log_path,
             diagnostic_stream=self.stderr,
@@ -173,6 +180,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertIn(REDACTION_MARKER, self.stderr.getvalue())
 
     def test_local_policy_event_is_distinct_and_redacted(self) -> None:
+        """Regression check: local policy event is distinct and redacted."""
         with MCPProtocolLogger(
             self.log_path,
             diagnostic_stream=self.stderr,
@@ -197,6 +205,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertNotIn("never-show-this", json.dumps(entry))
 
     def test_large_payload_is_redacted_then_truncated_as_valid_json(self) -> None:
+        """Regression check: large payload is redacted then truncated as valid json."""
         message = {
             "jsonrpc": "2.0",
             "id": 8,
@@ -230,6 +239,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertIn(REDACTION_MARKER, serialized_log)
 
     def test_orchestrator_events_have_explicit_safe_categories(self) -> None:
+        """Regression check: orchestrator events have explicit safe categories."""
         with MCPProtocolLogger(
             self.log_path,
             diagnostic_stream=self.stderr,
@@ -255,6 +265,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         ))
 
     def test_long_strings_and_binary_fields_are_bounded_or_omitted(self) -> None:
+        """Regression check: long strings and binary fields are bounded or omitted."""
         payload = {
             "jsonrpc": "2.0",
             "id": 9,
@@ -280,6 +291,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
         self.assertNotIn("binary" * 20, serialized)
 
     def test_filesystem_write_and_edit_bodies_are_not_logged(self) -> None:
+        """Regression check: filesystem write and edit bodies are not logged."""
         write_body = "private body that must reach the server"
         edit_old = "original private paragraph"
         edit_new = "replacement private paragraph"
@@ -322,6 +334,7 @@ class MCPProtocolLoggerTests(unittest.TestCase):
             self.assertNotIn(protected_text, serialized)
 
     def test_log_limits_reject_booleans_and_out_of_range_values(self) -> None:
+        """Regression check: log limits reject booleans and out of range values."""
         for options in (
             {"max_payload_chars": True},
             {"max_payload_chars": 255},
@@ -333,18 +346,21 @@ class MCPProtocolLoggerTests(unittest.TestCase):
                     MCPProtocolLogger(self.log_path, **options)
 
     def test_log_open_failure_is_explicit(self) -> None:
+        """Regression check: log open failure is explicit."""
         self.directory.write_text("block", encoding="utf-8")
 
         with self.assertRaisesRegex(MCPLogError, "Cannot open MCP log"):
             MCPProtocolLogger(self.directory / "host.jsonl")
 
     def _read_entries(self) -> list[dict[str, object]]:
+        """Support the controlled test scenario for read entries."""
         return [
             json.loads(line)
             for line in self.log_path.read_text(encoding="utf-8").splitlines()
         ]
 
     def _remove_test_directory(self) -> None:
+        """Support the controlled test scenario for remove test directory."""
         if self.directory.is_dir():
             for path in self.directory.iterdir():
                 path.unlink(missing_ok=True)

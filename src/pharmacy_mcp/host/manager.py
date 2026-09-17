@@ -1,4 +1,10 @@
-"""MCP process manager and namespaced tool registry."""
+"""MCP lifecycle manager and reversible namespaced tool registry.
+
+The manager starts configured stdio or HTTP clients, discovers their tools and maps
+``server__tool`` names back to the owning server. Registry updates are atomic from the
+caller's perspective, partial starts are reported without corrupting successful
+servers, and all owned clients are closed deterministically. Invocations pass through
+repository/filesystem policies before reaching a server."""
 
 from __future__ import annotations
 
@@ -39,6 +45,7 @@ class RegisteredTool:
     extra_fields: dict[str, JsonValue] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return a JSON-compatible copy of this registered tool value."""
         result = deepcopy(self.extra_fields)
         result.update({
             "name": self.namespaced_name,
@@ -63,6 +70,7 @@ class ServerSummary:
     process_id: int | None
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return a JSON-compatible copy of this server summary value."""
         return {
             "name": self.name,
             "transport": self.transport,
@@ -89,6 +97,7 @@ class MCPServerManager:
         *,
         protocol_logger: MCPProtocolLogger | None = None,
     ) -> None:
+        """Prepare isolated client slots, namespace indexes and shared protocol logging."""
         if not isinstance(config, HostConfig):
             raise TypeError("'config' must be a HostConfig instance.")
         self._config = config
@@ -227,6 +236,7 @@ class MCPServerManager:
             client.stop()
 
     def stop_all(self) -> None:
+        """Release all without leaking owned resources."""
         first_error: Exception | None = None
         try:
             for server_name in reversed(tuple(self._clients)):
@@ -380,6 +390,7 @@ class MCPServerManager:
         return not is_read_only_tool(tool.annotations)
 
     def server_name_from_namespace(self, namespaced_name: str) -> str:
+        """Resolve a published tool namespace to its configured server name."""
         if not isinstance(namespaced_name, str):
             raise MCPHostError("Namespaced tool name must be a string.")
         if namespaced_name.count(NAMESPACE_SEPARATOR) != 1:
@@ -404,6 +415,7 @@ class MCPServerManager:
         config: ServerConfig,
         definitions: tuple[dict[str, JsonValue], ...],
     ) -> tuple[RegisteredTool, ...]:
+        """Register definitions after enforcing uniqueness and schema rules."""
         registered: list[RegisteredTool] = []
         names_seen: set[str] = set()
         for definition in definitions:
@@ -459,20 +471,24 @@ class MCPServerManager:
         return tuple(registered)
 
     def _require_config(self, server_name: str) -> ServerConfig:
+        """Validate config and raise a controlled error on violation."""
         try:
             return self._configs[server_name]
         except (KeyError, TypeError) as exc:
             raise MCPHostError(f"Unknown configured server: '{server_name}'.") from exc
 
     def __enter__(self) -> MCPServerManager:
+        """Enter the mcpserver manager lifecycle and return the active instance."""
         self.start_all()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        """Leave the mcpserver manager lifecycle and release resources deterministically."""
         self.stop_all()
 
 
 def _safe_start_error(exc: Exception) -> str:
+    """Reduce a startup exception to a bounded type-and-message diagnostic."""
     if isinstance(exc, MCPHostError):
         return str(exc)[:500]
     return f"{type(exc).__name__}: server startup failed"

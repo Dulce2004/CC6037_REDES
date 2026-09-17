@@ -33,19 +33,24 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class ProviderSelectionTests(unittest.TestCase):
+    """Group regression checks for provider selection behavior and boundaries."""
     def test_provider_defaults_to_gemini_and_accepts_both_values(self) -> None:
+        """Regression check: provider defaults to gemini and accepts both values."""
         self.assertEqual(DEFAULT_LLM_PROVIDER, "gemini")
         self.assertEqual(provider_from_environ({}), "gemini")
         self.assertEqual(provider_from_environ({"LLM_PROVIDER": " gemini "}), "gemini")
         self.assertEqual(provider_from_environ({"LLM_PROVIDER": "ANTHROPIC"}), "anthropic")
 
     def test_invalid_provider_is_rejected_without_credentials(self) -> None:
+        """Regression check: invalid provider is rejected without credentials."""
         with self.assertRaisesRegex(LLMConfigurationError, "gemini.*anthropic"):
             provider_from_environ({"LLM_PROVIDER": "openai"})
 
 
 class GeminiSettingsTests(unittest.TestCase):
+    """Group regression checks for gemini settings behavior and boundaries."""
     def test_key_is_required_hidden_and_default_model_is_normalized(self) -> None:
+        """Regression check: key is required hidden and default model is normalized."""
         with self.assertRaisesRegex(GeminiConfigurationError, "GEMINI_API_KEY"):
             GeminiSettings.from_environ({})
         credential = f"unit-{uuid4().hex}"
@@ -55,6 +60,7 @@ class GeminiSettingsTests(unittest.TestCase):
         self.assertNotIn(credential, settings.endpoint)
 
     def test_model_override_and_models_prefix_are_normalized(self) -> None:
+        """Regression check: model override and models prefix are normalized."""
         direct = GeminiSettings(api_key="present", model="gemini-3.5-flash-lite")
         prefixed = GeminiSettings(
             api_key="present", model="models/gemini-3.5-flash-lite"
@@ -66,6 +72,7 @@ class GeminiSettingsTests(unittest.TestCase):
         self.assertEqual(override.model, "gemini-test_1.0")
 
     def test_invalid_model_names_are_rejected(self) -> None:
+        """Regression check: invalid model names are rejected."""
         for model in (
             "",
             "models/",
@@ -82,6 +89,7 @@ class GeminiSettingsTests(unittest.TestCase):
                     GeminiSettings(api_key="present", model=model)
 
     def test_environment_values_and_numeric_ranges_are_validated(self) -> None:
+        """Regression check: environment values and numeric ranges are validated."""
         settings = GeminiSettings.from_environ(
             {
                 "GEMINI_API_KEY": "present",
@@ -109,6 +117,7 @@ class GeminiSettingsTests(unittest.TestCase):
                     GeminiSettings(api_key="present", **kwargs)
 
     def test_base_url_requires_https_except_explicit_localhost(self) -> None:
+        """Regression check: base url requires https except explicit localhost."""
         official = GeminiSettings(api_key="present")
         self.assertEqual(
             official.endpoint,
@@ -135,7 +144,9 @@ class GeminiSettingsTests(unittest.TestCase):
 
 
 class GeminiHTTPClientTests(unittest.TestCase):
+    """Group regression checks for gemini httpclient behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.credential = f"unit-{uuid4().hex}"
         self.settings = GeminiSettings(
             api_key=self.credential,
@@ -144,6 +155,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
         )
 
     def test_builds_exact_post_headers_and_basic_json_body(self) -> None:
+        """Regression check: builds exact post headers and basic json body."""
         transport = _QueueTransport([_valid_response(text="Hola")])
         client = GeminiGenerateContentClient(self.settings, transport=transport)
         messages = [{"role": "user", "content": "Hola"}]
@@ -184,6 +196,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
         self.assertEqual(result.content[0]["text"], "Hola")
 
     def test_tools_and_system_are_omitted_when_unavailable(self) -> None:
+        """Regression check: tools and system are omitted when unavailable."""
         transport = _QueueTransport([_valid_response(text="ok")])
         GeminiGenerateContentClient(self.settings, transport=transport).create_message(
             messages=[]
@@ -193,6 +206,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
         self.assertNotIn("systemInstruction", payload)
 
     def test_http_statuses_are_safe_and_request_id_is_sanitized(self) -> None:
+        """Regression check: http statuses are safe and request id is sanitized."""
         for status, expected in (
             (400, "rejected"),
             (401, "authentication"),
@@ -236,6 +250,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
         self.assertIsNone(context.exception.request_id)
 
     def test_timeout_connection_invalid_transport_and_oversize_are_safe(self) -> None:
+        """Regression check: timeout connection invalid transport and oversize are safe."""
         for failure, expected in (
             (TimeoutError(), "timed out"),
             (socket.timeout(), "timed out"),
@@ -270,6 +285,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
             dishonest_transport.create_message(messages=[])
 
     def test_invalid_utf8_json_and_response_shape_are_rejected(self) -> None:
+        """Regression check: invalid utf8 json and response shape are rejected."""
         for body in (b"\xff", b"not-json", b"{}", b'{"candidates":[]}'):
             with self.subTest(body=body):
                 client = GeminiGenerateContentClient(
@@ -283,6 +299,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
                 self.assertNotIn(self.credential, str(context.exception))
 
     def test_default_transport_closes_success_and_http_error_responses(self) -> None:
+        """Regression check: default transport closes success and http error responses."""
         success = _ClosableResponse(_valid_response(text="ok").body)
         with patch("urllib.request.urlopen", return_value=success):
             result = GeminiUrllibHTTPTransport()(_request(self.credential))
@@ -303,6 +320,7 @@ class GeminiHTTPClientTests(unittest.TestCase):
         self.assertTrue(body.closed)
 
     def test_optional_retry_uses_retry_after_and_logs_metadata_only(self) -> None:
+        """Regression check: optional retry uses retry after and logs metadata only."""
         transport = _QueueTransport(
             [
                 HTTPResponse(status=429, headers={"Retry-After": "0"}, body=b"{}"),
@@ -328,11 +346,14 @@ class GeminiHTTPClientTests(unittest.TestCase):
 
 
 class _QueueTransport:
+    """Provide a deterministic queue transport test double for isolated scenarios."""
     def __init__(self, responses) -> None:
+        """Support the controlled test scenario for init."""
         self.responses = list(responses)
         self.requests = []
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         self.requests.append(request)
         if not self.responses:
             raise AssertionError("Unexpected simulated HTTP request")
@@ -340,30 +361,38 @@ class _QueueTransport:
 
 
 class _RaisingTransport:
+    """Provide a deterministic raising transport test double for isolated scenarios."""
     def __init__(self, failure: Exception) -> None:
+        """Support the controlled test scenario for init."""
         self.failure = failure
 
     def __call__(self, request):
+        """Support the controlled test scenario for call."""
         raise self.failure
 
 
 class _ClosableResponse:
+    """Provide a deterministic closable response test double for isolated scenarios."""
     status = 200
     headers = MappingProxyType({"x-goog-request-id": "req"})
 
     def __init__(self, body: bytes) -> None:
+        """Support the controlled test scenario for init."""
         self._body = io.BytesIO(body)
         self.closed_by_client = False
 
     def read(self, amount: int) -> bytes:
+        """Support the controlled test scenario for read."""
         return self._body.read(amount)
 
     def close(self) -> None:
+        """Support the controlled test scenario for close."""
         self.closed_by_client = True
         self._body.close()
 
 
 def _request(credential: str) -> HTTPRequest:
+    """Support the controlled test scenario for request."""
     return HTTPRequest(
         method="POST",
         url="https://generativelanguage.googleapis.com/v1beta/models/test:generateContent",
@@ -375,6 +404,7 @@ def _request(credential: str) -> HTTPRequest:
 
 
 def _valid_response(*, text: str) -> HTTPResponse:
+    """Support the controlled test scenario for valid response."""
     return HTTPResponse(
         status=200,
         headers={"x-goog-request-id": "req-test"},

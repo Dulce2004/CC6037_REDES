@@ -1,4 +1,9 @@
-"""Adaptadores MCP para crear y consultar órdenes simuladas."""
+"""Adaptadores MCP para crear y consultar órdenes simuladas.
+
+Los handlers validan estructuras y referencias académicas, delegan la transacción al
+mismo almacén SQLite usado por stock y serializan dinero sin ``float``. Errores de
+dominio bien formados regresan como resultados de tool; errores de forma permanecen
+``InvalidParams``. Solo ``create_order`` puede mutar estado."""
 
 from __future__ import annotations
 
@@ -96,12 +101,14 @@ class PharmacyOrderHandlers:
     store: SQLitePharmacyStore
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed pharmacy order handlers invariants."""
         if not isinstance(self.catalog, PharmacyCatalog):
             raise TypeError("'catalog' must be a PharmacyCatalog instance.")
         if not isinstance(self.store, SQLitePharmacyStore):
             raise TypeError("'store' must be a SQLitePharmacyStore instance.")
 
     def create_order(self, arguments: ToolArguments) -> JsonValue:
+        """Build order from validated inputs."""
         _reject_unexpected_arguments(
             arguments,
             {"branch_id", "items", "prescription_id"},
@@ -131,6 +138,7 @@ class PharmacyOrderHandlers:
         return _tool_result(text, {"order": structured})
 
     def get_order_status(self, arguments: ToolArguments) -> JsonValue:
+        """Return order status while preserving stable ordering and ownership."""
         _reject_unexpected_arguments(arguments, {"order_id"})
         order_id = _required_identifier(arguments, "order_id").upper()
 
@@ -148,6 +156,7 @@ class PharmacyOrderHandlers:
         return _tool_result(text, {"order": structured})
 
     def _serialize_order(self, order: OrderRecord) -> dict[str, JsonValue]:
+        """Serialize order without changing the source value."""
         branch = self.catalog.get_branch(order.branch_id)
         if branch is None:
             raise RuntimeError("An order references an unknown branch.")
@@ -184,6 +193,7 @@ class PharmacyOrderHandlers:
 
 
 def _required_order_items(arguments: ToolArguments) -> tuple[OrderItemRequest, ...]:
+    """Validate order items and raise a controlled error on violation."""
     value = arguments.get("items")
     if not isinstance(value, list):
         raise InvalidParamsError("'items' must be an array.")
@@ -241,6 +251,7 @@ def _required_order_items(arguments: ToolArguments) -> tuple[OrderItemRequest, .
 
 
 def _optional_prescription_id(arguments: ToolArguments) -> str | None:
+    """Validate an optional simulated prescription reference for order processing."""
     if "prescription_id" not in arguments:
         return None
     value = arguments["prescription_id"]
@@ -255,6 +266,7 @@ def _optional_prescription_id(arguments: ToolArguments) -> str | None:
 
 
 def _required_identifier(arguments: ToolArguments, name: str) -> str:
+    """Validate identifier and raise a controlled error on violation."""
     value = arguments.get(name)
     if not isinstance(value, str) or not value.strip():
         raise InvalidParamsError(f"'{name}' must be a non-empty string.")
@@ -270,6 +282,7 @@ def _reject_unexpected_arguments(
     arguments: ToolArguments,
     allowed: set[str],
 ) -> None:
+    """Validate unexpected arguments and raise a controlled error on violation."""
     unexpected = sorted(set(arguments) - allowed)
     if unexpected:
         raise InvalidParamsError(
@@ -278,6 +291,7 @@ def _reject_unexpected_arguments(
 
 
 def _money(amount_centavos: int) -> dict[str, JsonValue]:
+    """Serialize centavos as an exact two-decimal GTQ amount without binary floats."""
     quetzales, centavos = divmod(amount_centavos, 100)
     return {
         "amount": f"{quetzales}.{centavos:02d}",
@@ -286,6 +300,7 @@ def _money(amount_centavos: int) -> dict[str, JsonValue]:
 
 
 def _tool_result(text: str, structured_content: JsonValue) -> dict[str, JsonValue]:
+    """Wrap structured order data in the MCP text-content result shape."""
     return {
         "content": [{"type": "text", "text": text}],
         "structuredContent": structured_content,
@@ -293,6 +308,7 @@ def _tool_result(text: str, structured_content: JsonValue) -> dict[str, JsonValu
 
 
 def _tool_error(text: str) -> dict[str, JsonValue]:
+    """Return a domain failure as a successful MCP call marked ``isError``."""
     return {
         "content": [{"type": "text", "text": text}],
         "isError": True,

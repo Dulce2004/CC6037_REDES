@@ -1,4 +1,8 @@
-"""Dominio educativo y datos simulados del caso de uso de farmacia."""
+"""Dominio educativo y datos simulados del caso de uso de farmacia.
+
+Reexporta catálogo, inventario, interacciones, evaluación y órdenes para los adaptadores
+MCP. Las reglas son deterministas, limitadas y no constituyen validación médica. La
+persistencia SQLite solo aparece al construir e inicializar explícitamente el almacén."""
 
 from .assessment import (
     ASSESSMENT_DISCLAIMER,

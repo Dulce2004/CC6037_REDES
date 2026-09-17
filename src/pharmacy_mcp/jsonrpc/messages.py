@@ -1,4 +1,9 @@
-"""Estructuras de datos y validaciones básicas para mensajes JSON-RPC 2.0."""
+"""Estructuras inmutables y validaciones para mensajes JSON-RPC 2.0.
+
+Los modelos distinguen miembro ``id`` ausente de ``null``, validan recursivamente
+valores JSON y prohíben respuestas ambiguas. ``to_dict`` devuelve copias serializables
+sin alterar los objetos originales. La validación es puramente local y no conoce MCP
+o transportes."""
 
 from __future__ import annotations
 
@@ -26,11 +31,13 @@ _NOT_PROVIDED = _NotProvided()
 
 
 def _validate_version(version: object) -> None:
+    """Require the exact JSON-RPC 2.0 version marker."""
     if version != JSONRPC_VERSION:
         raise InvalidRequestError("'jsonrpc' must be exactly '2.0'.")
 
 
 def _validate_id(message_id: object) -> None:
+    """Accept JSON-RPC scalar IDs while excluding booleans and non-finite numbers."""
     if isinstance(message_id, bool) or not isinstance(
         message_id, (str, int, float, type(None))
     ):
@@ -73,6 +80,7 @@ class Request:
     jsonrpc: str = JSONRPC_VERSION
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed request invariants."""
         _validate_version(self.jsonrpc)
         if not isinstance(self.method, str):
             raise InvalidRequestError("'method' must be a string.")
@@ -115,6 +123,7 @@ class Response:
     jsonrpc: str = JSONRPC_VERSION
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed response invariants."""
         _validate_version(self.jsonrpc)
         _validate_id(self.id)
         _validate_json_value(self.result, "result")
@@ -134,6 +143,7 @@ class ErrorObject:
     data: JsonValue | _NotProvided = _NOT_PROVIDED
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed error object invariants."""
         if isinstance(self.code, bool) or not isinstance(self.code, int):
             raise InvalidRequestError("Error 'code' must be an integer.")
         if not isinstance(self.message, str):
@@ -162,6 +172,7 @@ class ErrorResponse:
     jsonrpc: str = JSONRPC_VERSION
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed error response invariants."""
         _validate_version(self.jsonrpc)
         _validate_id(self.id)
         if not isinstance(self.error, ErrorObject):

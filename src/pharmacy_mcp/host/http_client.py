@@ -1,4 +1,9 @@
-"""Synchronous manual client for MCP Streamable HTTP without SSE."""
+"""Synchronous manual client for MCP Streamable HTTP without SSE.
+
+``HTTPMCPClient`` creates one authenticated session, completes MCP initialization,
+correlates JSON-RPC IDs and closes the remote session with DELETE. Bodies, headers,
+session IDs and timeouts are validated and bounded; mutable calls are never retried.
+Network I/O occurs only through the injected transport during lifecycle operations."""
 
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ PROTOCOL_HEADER = "MCP-Protocol-Version"
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MCPHTTPRequest:
+    """Hold the validated mcphttprequest data exchanged by this module."""
     method: str
     url: str
     headers: Mapping[str, str] = field(repr=False)
@@ -49,6 +55,7 @@ class MCPHTTPRequest:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MCPHTTPResponse:
+    """Hold the validated mcphttpresponse data exchanged by this module."""
     status: int
     headers: Mapping[str, str] = field(repr=False)
     body: bytes = field(repr=False)
@@ -62,6 +69,7 @@ class MCPUrllibHTTPTransport:
     """Perform one bounded HTTP exchange and close every response stream."""
 
     def __call__(self, request: MCPHTTPRequest) -> MCPHTTPResponse:
+        """Execute the callable mcpurllib httptransport contract and return its bounded result."""
         raw_request = urllib.request.Request(
             request.url,
             data=request.body if request.method == "POST" else None,
@@ -124,6 +132,7 @@ class HTTPMCPClient:
         protocol_logger: MCPProtocolLogger | None = None,
         transport: HTTPMCPTransport | None = None,
     ) -> None:
+        """Bind validated HTTP settings, an optional logger and an injectable transport."""
         if not isinstance(config, HTTPServerConfig):
             raise TypeError("'config' must be an HTTPServerConfig instance.")
         if config.url is None:
@@ -143,14 +152,17 @@ class HTTPMCPClient:
 
     @property
     def is_running(self) -> bool:
+        """Return whether the server has issued an active MCP session identifier."""
         return self._session_id is not None
 
     @property
     def is_ready(self) -> bool:
+        """Return whether initialization and its notification completed successfully."""
         return self._ready and self._session_id is not None
 
     @property
     def process_id(self) -> None:
+        """Return ``None`` because HTTP sessions do not expose a local child PID."""
         return None
 
     def start(self) -> None:
@@ -194,6 +206,7 @@ class HTTPMCPClient:
                 raise
 
     def list_tools(self) -> tuple[dict[str, JsonValue], ...]:
+        """Return tools while preserving stable ordering and ownership."""
         self._require_ready()
         result = self.request("tools/list", {})
         if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
@@ -225,6 +238,7 @@ class HTTPMCPClient:
         tool_name: str,
         arguments: dict[str, JsonValue],
     ) -> JsonValue:
+        """Validate and invoke one remote MCP tool through ``tools/call``."""
         self._require_ready()
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise MCPProtocolError("Tool name must be a non-empty string.")
@@ -240,12 +254,14 @@ class HTTPMCPClient:
         method: str,
         params: dict[str, JsonValue],
     ) -> JsonValue:
+        """Serialize one correlated JSON-RPC request on the active session."""
         with self._exchange_lock:
             self._require_ready()
             result, _ = self._send_request(method, params, initializing=False)
             return result
 
     def notify(self, method: str, params: dict[str, JsonValue]) -> None:
+        """Send one JSON-RPC notification and require the HTTP 202 contract."""
         with self._exchange_lock:
             self._require_ready()
             self._send_notification(method, params)
@@ -272,10 +288,12 @@ class HTTPMCPClient:
             raise failure
 
     def __enter__(self) -> HTTPMCPClient:
+        """Enter the httpmcpclient lifecycle and return the active instance."""
         self.start()
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        """Leave the httpmcpclient lifecycle and release resources deterministically."""
         self.stop()
 
     def _send_request(
@@ -285,6 +303,7 @@ class HTTPMCPClient:
         *,
         initializing: bool,
     ) -> tuple[JsonValue, Mapping[str, str]]:
+        """Send one correlated JSON-RPC request and validate its matching result."""
         request_id = self._next_request_id
         self._next_request_id += 1
         try:
@@ -331,6 +350,7 @@ class HTTPMCPClient:
         method: str,
         params: dict[str, JsonValue],
     ) -> None:
+        """Send one ID-less JSON-RPC notification and require an empty HTTP 202."""
         try:
             payload = serialize_message(Request(method=method, params=params))
         except JsonRpcError as exc:
@@ -358,6 +378,7 @@ class HTTPMCPClient:
         initializing: bool,
         method: str,
     ) -> MCPHTTPResponse:
+        """Issue a bounded POST with lifecycle-appropriate MCP headers."""
         if len(body) > self.config.max_request_bytes:
             raise MCPTransportError(
                 f"Server '{self.config.name}' request exceeded the size limit."
@@ -387,6 +408,7 @@ class HTTPMCPClient:
         return response
 
     def _delete_session(self, *, suppress_errors: bool) -> None:
+        """Ask the server to delete the current session, optionally suppressing cleanup errors."""
         if self._session_id is None:
             return
         request = MCPHTTPRequest(
@@ -427,6 +449,7 @@ class HTTPMCPClient:
         include_session: bool,
         include_protocol: bool,
     ) -> dict[str, str]:
+        """Build protocol, session and optional Bearer headers without logging their values."""
         headers = {
             "Accept": ACCEPT_HEADER,
             "Content-Type": "application/json",
@@ -444,6 +467,7 @@ class HTTPMCPClient:
         return headers
 
     def _call_transport(self, request: MCPHTTPRequest) -> MCPHTTPResponse:
+        """Invoke the injected transport and normalize socket failures as MCP errors."""
         try:
             return self._transport(request)
         except MCPTransportError:
@@ -459,6 +483,7 @@ class HTTPMCPClient:
             raise MCPTransportError("MCP HTTP transport failed.") from exc
 
     def _validate_http_response(self, response: object) -> None:
+        """Validate http response and raise a controlled error on violation."""
         if (
             not isinstance(response, MCPHTTPResponse)
             or isinstance(response.status, bool)
@@ -486,6 +511,7 @@ class HTTPMCPClient:
         expected: set[int],
         method: str,
     ) -> None:
+        """Validate status and raise a controlled error on violation."""
         if response.status in expected:
             return
         if response.status == 404:
@@ -510,6 +536,7 @@ class HTTPMCPClient:
         )
 
     def _json_response_payload(self, response: MCPHTTPResponse) -> str:
+        """Decode one UTF-8 JSON object while rejecting duplicates and invalid constants."""
         content_type = _header(response.headers, "Content-Type") or ""
         segments = [segment.strip() for segment in content_type.split(";")]
         media_type = segments[0].casefold()
@@ -544,6 +571,7 @@ class HTTPMCPClient:
             ) from exc
 
     def _deserialize_response(self, payload: str) -> Response | ErrorResponse:
+        """Parse response into the module's validated representation."""
         try:
             message = deserialize_message(payload)
         except JsonRpcError as exc:
@@ -558,6 +586,7 @@ class HTTPMCPClient:
         return message
 
     def _validate_initialize_result(self, result: JsonValue) -> None:
+        """Validate initialize result and raise a controlled error on violation."""
         if not isinstance(result, dict):
             raise MCPProtocolError(
                 f"Server '{self.config.name}' returned invalid initialize data."
@@ -582,12 +611,14 @@ class HTTPMCPClient:
         self.server_capabilities = deepcopy(capabilities)
 
     def _require_ready(self) -> None:
+        """Validate ready and raise a controlled error on violation."""
         if not self.is_ready:
             raise MCPTransportError(
                 f"Server '{self.config.name}' is not initialized."
             )
 
     def _reset_state(self) -> None:
+        """Return all lifecycle metadata to the pre-start state."""
         self._ready = False
         self._session_id = None
         self.server_info = None
@@ -595,6 +626,7 @@ class HTTPMCPClient:
 
 
 def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
+    """Read at most ``maximum`` response bytes and flag a truncated body."""
     body = stream.read(maximum + 1)
     if not isinstance(body, bytes):
         raise MCPTransportError("MCP HTTP server returned a non-binary body.")
@@ -602,6 +634,7 @@ def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Look up one response header case-insensitively without mutating the mapping."""
     for key, value in headers.items():
         if key.casefold() == name.casefold() and isinstance(value, str):
             return value
@@ -609,4 +642,5 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
 
 
 def _valid_session_id(value: str) -> bool:
+    """Accept bounded visible-ASCII session IDs safe for an HTTP header value."""
     return 1 <= len(value) <= 512 and all(0x21 <= ord(char) <= 0x7E for char in value)

@@ -33,7 +33,9 @@ from pharmacy_mcp.host import (  # noqa: E402
 
 
 class FilesystemInvocationPolicyTests(unittest.TestCase):
+    """Group regression checks for filesystem invocation policy behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         RUNTIME_DIRECTORY.mkdir(exist_ok=True)
         self.temporary_root = RUNTIME_DIRECTORY / f"filesystem-policy-{uuid4().hex}"
         self.temporary_root.mkdir()
@@ -58,6 +60,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
         annotations: dict[str, object] | None = None,
         allow_mutation: bool = False,
     ):
+        """Support the controlled test scenario for prepare."""
         return prepare_filesystem_invocation(
             self.policy,
             tool_name=tool_name,
@@ -71,6 +74,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
         )
 
     def test_exact_root_and_descendant_are_allowed_without_rewriting(self) -> None:
+        """Regression check: exact root and descendant are allowed without rewriting."""
         arguments = {"path": str(self.file), "extra": {"value": 1}}
         original = deepcopy(arguments)
 
@@ -89,6 +93,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
     def test_relative_parent_sibling_external_and_missing_reads_are_rejected(
         self,
     ) -> None:
+        """Regression check: relative parent sibling external and missing reads are rejected."""
         sibling_prefix = self.root.parent / f"{self.root.name}-sibling"
         sibling_prefix.mkdir()
         candidates = (
@@ -104,6 +109,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
                     self.prepare("read_text_file", {"path": candidate})
 
     def test_creation_paths_require_safe_existing_ancestor(self) -> None:
+        """Regression check: creation paths require safe existing ancestor."""
         inside = self.root / "new" / "README.md"
         outside = self.external / "new" / "README.md"
 
@@ -124,6 +130,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
             )
 
     def test_every_array_path_and_both_move_endpoints_are_checked(self) -> None:
+        """Regression check: every array path and both move endpoints are checked."""
         invocation = self.prepare(
             "read_multiple_files",
             {"paths": [str(self.file), str(self.root / "nested")]},
@@ -156,6 +163,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
             )
 
     def test_invalid_array_and_empty_path_values_are_rejected(self) -> None:
+        """Regression check: invalid array and empty path values are rejected."""
         for arguments in (
             {"paths": []},
             {"paths": str(self.file)},
@@ -167,6 +175,7 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
                     self.prepare("read_multiple_files", arguments)
 
     def test_annotations_are_interpreted_conservatively(self) -> None:
+        """Regression check: annotations are interpreted conservatively."""
         self.prepare(
             "list_allowed_directories",
             {},
@@ -199,11 +208,13 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows path-case behavior")
     def test_windows_case_alias_is_allowed_and_not_rewritten(self) -> None:
+        """Regression check: windows case alias is allowed and not rewritten."""
         alias = str(self.file).swapcase()
         invocation = self.prepare("read_text_file", {"path": alias})
         self.assertEqual(invocation.arguments["path"], alias)
 
     def test_symlink_or_junction_escape_is_rejected(self) -> None:
+        """Regression check: symlink or junction escape is rejected."""
         link = self.root / "escape"
         _create_directory_link_or_skip(self, link, self.external)
         try:
@@ -227,7 +238,9 @@ class FilesystemInvocationPolicyTests(unittest.TestCase):
 
 
 class FilesystemManagerPolicyTests(unittest.TestCase):
+    """Group regression checks for filesystem manager policy behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         RUNTIME_DIRECTORY.mkdir(exist_ok=True)
         self.temporary_root = RUNTIME_DIRECTORY / f"filesystem-manager-{uuid4().hex}"
         self.temporary_root.mkdir()
@@ -253,6 +266,7 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
         self.manager._clients["filesystem"] = self.client
 
     def register(self, name: str, annotations: dict[str, object]) -> None:
+        """Support the controlled test scenario for register."""
         self.manager._tools[f"filesystem__{name}"] = RegisteredTool(
             namespaced_name=f"filesystem__{name}",
             server_name="filesystem",
@@ -263,6 +277,7 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
         )
 
     def test_rejection_is_local_and_log_never_contains_path_or_content(self) -> None:
+        """Regression check: rejection is local and log never contains path or content."""
         self.register("write_file", {"readOnlyHint": False, "destructiveHint": True})
         secret_content = "do-not-log-this-content"
         with self.assertRaisesRegex(MCPHostError, "--allow-mutation"):
@@ -282,6 +297,7 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
     def test_authorized_call_preserves_original_paths_and_logs_minimum_metadata(
         self,
     ) -> None:
+        """Regression check: authorized call preserves original paths and logs minimum metadata."""
         self.register("write_file", {"readOnlyHint": False})
         path_alias = str(self.root / "new.txt")
         arguments = {"path": path_alias, "content": "not-in-policy-log"}
@@ -307,6 +323,7 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
         )
 
     def test_chat_confirmation_classification_uses_annotations(self) -> None:
+        """Regression check: chat confirmation classification uses annotations."""
         self.register("read_text_file", {"readOnlyHint": True})
         self.register("write_file", {"readOnlyHint": False})
         self.assertFalse(
@@ -318,17 +335,21 @@ class FilesystemManagerPolicyTests(unittest.TestCase):
 
 
 class _RecordingClient:
+    """Provide a deterministic recording client test double for isolated scenarios."""
     is_ready = True
 
     def __init__(self) -> None:
+        """Support the controlled test scenario for init."""
         self.calls: list[tuple[str, dict[str, object]]] = []
 
     def call_tool(self, tool_name: str, arguments: dict[str, object]) -> object:
+        """Support the controlled test scenario for call tool."""
         self.calls.append((tool_name, deepcopy(arguments)))
         return {"content": [{"type": "text", "text": "ok"}]}
 
 
 def _filesystem_policy(root: Path) -> FilesystemPolicyConfig:
+    """Support the controlled test scenario for filesystem policy."""
     return FilesystemPolicyConfig(
         root=root.resolve(strict=True),
         path_arguments=("path", "paths", "source", "destination"),
@@ -347,6 +368,7 @@ def _create_directory_link_or_skip(
     link: Path,
     target: Path,
 ) -> None:
+    """Build the deterministic create directory link or skip fixture used by this test module."""
     try:
         link.symlink_to(target, target_is_directory=True)
         return
@@ -364,6 +386,7 @@ def _create_directory_link_or_skip(
 
 
 def _remove_directory_link(path: Path) -> None:
+    """Support the controlled test scenario for remove directory link."""
     if path.is_symlink():
         path.unlink()
     elif path.exists():
@@ -371,6 +394,7 @@ def _remove_directory_link(path: Path) -> None:
 
 
 def _remove_generated_tree(path: Path) -> None:
+    """Support the controlled test scenario for remove generated tree."""
     if path.parent.resolve(strict=True) != RUNTIME_DIRECTORY.resolve(strict=True):
         raise AssertionError("Refusing to remove a directory outside runtime")
     if path.exists():

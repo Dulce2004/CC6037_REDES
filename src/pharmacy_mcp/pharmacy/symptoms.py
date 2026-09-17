@@ -1,4 +1,8 @@
-"""Catálogo controlado y reglas educativas para síntomas."""
+"""Catálogo controlado y reglas educativas para síntomas.
+
+Define datos inmutables usados por el clasificador interno; no procesa entradas ni
+consulta servicios externos. Las categorías son simuladas y acotadas, por lo que nunca
+deben interpretarse como diagnóstico o cobertura médica completa."""
 
 RECOGNIZED_SYMPTOMS = frozenset(
     {

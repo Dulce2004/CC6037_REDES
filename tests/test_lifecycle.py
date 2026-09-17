@@ -25,6 +25,7 @@ from pharmacy_mcp.server import (  # noqa: E402
 
 
 def valid_initialize_params() -> dict[str, object]:
+    """Support the controlled test scenario for valid initialize params."""
     return {
         "protocolVersion": SUPPORTED_PROTOCOL_VERSION,
         "capabilities": {},
@@ -33,10 +34,13 @@ def valid_initialize_params() -> dict[str, object]:
 
 
 class LifecycleTests(unittest.TestCase):
+    """Group regression checks for lifecycle behavior and boundaries."""
     def setUp(self) -> None:
+        """Create isolated collaborators and resources for each regression check."""
         self.server = PharmacyMCPServer()
 
     def initialize_server(self, request_id: object = 1) -> Response:
+        """Support the controlled test scenario for initialize server."""
         response = self.server.process_request(
             Request(
                 method="initialize",
@@ -48,6 +52,7 @@ class LifecycleTests(unittest.TestCase):
         return response
 
     def make_server_ready(self) -> None:
+        """Build the deterministic make server ready fixture used by this test module."""
         self.initialize_server()
         response = self.server.process_request(
             Request(method="notifications/initialized", params={})
@@ -56,9 +61,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.READY)
 
     def test_initial_state_is_uninitialized(self) -> None:
+        """Regression check: initial state is uninitialized."""
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_valid_initialize_transitions_to_initializing(self) -> None:
+        """Regression check: valid initialize transitions to initializing."""
         response = self.initialize_server(request_id="initialize-1")
 
         self.assertEqual(response.id, "initialize-1")
@@ -74,6 +81,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_null_id_is_processed_as_a_request(self) -> None:
+        """Regression check: null id is processed as a request."""
         response = self.initialize_server(request_id=None)
 
         self.assertIsInstance(response, Response)
@@ -81,6 +89,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_initialized_notification_transitions_to_ready_without_response(self) -> None:
+        """Regression check: initialized notification transitions to ready without response."""
         self.initialize_server()
 
         response = self.server.process_request(
@@ -91,6 +100,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.READY)
 
     def test_initialize_requires_protocol_version(self) -> None:
+        """Regression check: initialize requires protocol version."""
         params = valid_initialize_params()
         del params["protocolVersion"]
 
@@ -104,6 +114,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_initialize_requires_capabilities(self) -> None:
+        """Regression check: initialize requires capabilities."""
         params = valid_initialize_params()
         del params["capabilities"]
 
@@ -117,6 +128,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_initialize_requires_client_info(self) -> None:
+        """Regression check: initialize requires client info."""
         params = valid_initialize_params()
         del params["clientInfo"]
 
@@ -130,6 +142,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_initialize_requires_client_name(self) -> None:
+        """Regression check: initialize requires client name."""
         params = valid_initialize_params()
         params["clientInfo"] = {"version": "1.0.0"}
 
@@ -143,6 +156,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_initialize_requires_client_version(self) -> None:
+        """Regression check: initialize requires client version."""
         params = valid_initialize_params()
         params["clientInfo"] = {"name": "Lifecycle Test Client"}
 
@@ -156,6 +170,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_unsupported_protocol_version_does_not_change_state(self) -> None:
+        """Regression check: unsupported protocol version does not change state."""
         params = valid_initialize_params()
         params["protocolVersion"] = "2024-11-05"
 
@@ -169,6 +184,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_second_initialize_is_rejected_while_initializing(self) -> None:
+        """Regression check: second initialize is rejected while initializing."""
         self.initialize_server()
 
         response = self.server.process_request(
@@ -180,6 +196,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_second_initialize_is_rejected_while_ready(self) -> None:
+        """Regression check: second initialize is rejected while ready."""
         self.make_server_ready()
 
         response = self.server.process_request(
@@ -191,6 +208,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.READY)
 
     def test_tools_list_is_rejected_before_initialize(self) -> None:
+        """Regression check: tools list is rejected before initialize."""
         response = self.server.process_request(
             Request(method="tools/list", params={}, id=1)
         )
@@ -199,6 +217,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(response.error.code, SERVER_NOT_INITIALIZED)
 
     def test_tools_list_is_rejected_while_initializing(self) -> None:
+        """Regression check: tools list is rejected while initializing."""
         self.initialize_server()
 
         response = self.server.process_request(
@@ -210,6 +229,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_tools_call_is_rejected_before_ready(self) -> None:
+        """Regression check: tools call is rejected before ready."""
         response = self.server.process_request(
             Request(
                 method="tools/call",
@@ -222,6 +242,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(response.error.code, SERVER_NOT_INITIALIZED)
 
     def test_tools_call_is_rejected_while_initializing(self) -> None:
+        """Regression check: tools call is rejected while initializing."""
         self.initialize_server()
 
         response = self.server.process_request(
@@ -237,6 +258,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_valid_notification_never_returns_a_response(self) -> None:
+        """Regression check: valid notification never returns a response."""
         self.make_server_ready()
 
         response = self.server.process_request(
@@ -246,6 +268,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(response)
 
     def test_unknown_method_notification_never_returns_a_response(self) -> None:
+        """Regression check: unknown method notification never returns a response."""
         response = self.server.process_request(
             Request(method="unknown/notification", params={})
         )
@@ -253,6 +276,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(response)
 
     def test_invalid_params_notification_never_returns_a_response(self) -> None:
+        """Regression check: invalid params notification never returns a response."""
         self.make_server_ready()
 
         response = self.server.process_request(
@@ -262,7 +286,9 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(response)
 
     def test_handler_exception_notification_never_returns_a_response(self) -> None:
+        """Regression check: handler exception notification never returns a response."""
         def failing_handler(arguments: dict[str, object]) -> dict[str, object]:
+            """Support the controlled test scenario for failing handler."""
             raise RuntimeError("Technical failure")
 
         self.server.register_tool(
@@ -283,6 +309,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(response)
 
     def test_initialized_notification_out_of_order_is_ignored(self) -> None:
+        """Regression check: initialized notification out of order is ignored."""
         response = self.server.process_request(
             Request(method="notifications/initialized", params={})
         )
@@ -291,6 +318,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_repeated_initialized_notification_is_ignored_when_ready(self) -> None:
+        """Regression check: repeated initialized notification is ignored when ready."""
         self.make_server_ready()
 
         response = self.server.process_request(
@@ -301,6 +329,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.READY)
 
     def test_initialize_notification_is_ignored_without_state_change(self) -> None:
+        """Regression check: initialize notification is ignored without state change."""
         response = self.server.process_request(
             Request(method="initialize", params=valid_initialize_params())
         )
@@ -309,6 +338,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.UNINITIALIZED)
 
     def test_initialized_message_with_id_is_rejected(self) -> None:
+        """Regression check: initialized message with id is rejected."""
         self.initialize_server()
 
         response = self.server.process_request(
@@ -320,6 +350,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIs(self.server.state, ServerState.INITIALIZING)
 
     def test_normal_request_preserves_its_id(self) -> None:
+        """Regression check: normal request preserves its id."""
         self.make_server_ready()
 
         response = self.server.process_request(

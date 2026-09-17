@@ -1,4 +1,10 @@
-"""Manual, synchronous client for Gemini Developer API generateContent."""
+"""Manual synchronous client for Gemini Developer API ``generateContent``.
+
+The module validates settings, converts provider-neutral history and tools, preserves
+function-call correlation metadata and normalizes one non-streaming response. The
+injectable transport enables network-free tests; optional retries are bounded and
+limited to transient failures. API keys remain in request metadata and are excluded
+from repr, logs and safe exceptions."""
 
 from __future__ import annotations
 
@@ -65,6 +71,7 @@ class GeminiAPIError(LLMAPIError):
         status: int | None = None,
         request_id: str | None = None,
     ) -> None:
+        """Capture a sanitized provider failure and whether a retry may be safe."""
         suffix = f" (request ID: {request_id})" if request_id else ""
         super().__init__(f"{message}{suffix}")
         self.status = status
@@ -85,6 +92,7 @@ class GeminiSettings:
     max_response_bytes: int = DEFAULT_GEMINI_MAX_HTTP_RESPONSE_BYTES
 
     def __post_init__(self) -> None:
+        """Validate the newly constructed gemini settings invariants."""
         if not isinstance(self.api_key, str) or not self.api_key.strip():
             raise GeminiConfigurationError(
                 "GEMINI_API_KEY is required when LLM_PROVIDER is gemini."
@@ -120,6 +128,7 @@ class GeminiSettings:
 
     @property
     def endpoint(self) -> str:
+        """Construct the validated model-specific generateContent URL."""
         parsed = urlsplit(self.base_url)
         path = parsed.path.rstrip("/")
         if path.endswith("/v1beta"):
@@ -131,6 +140,7 @@ class GeminiSettings:
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str]) -> GeminiSettings:
+        """Construct gemini settings from validated environ."""
         if not isinstance(environ, Mapping):
             raise TypeError("'environ' must be a mapping.")
         return cls(
@@ -174,6 +184,7 @@ class GeminiMessage:
 
     @property
     def log_metadata(self) -> Mapping[str, JsonValue]:
+        """Return immutable provider metadata safe for structured protocol logs."""
         return MappingProxyType(
             {
                 "finish_reason": self.finish_reason,
@@ -192,6 +203,7 @@ class GeminiUrllibHTTPTransport:
     """Bounded urllib transport that always closes response streams."""
 
     def __call__(self, request: HTTPRequest) -> HTTPResponse:
+        """Execute the callable gemini urllib httptransport contract and return its bounded result."""
         raw_request = urllib.request.Request(
             request.url,
             data=request.body,
@@ -253,6 +265,7 @@ class GeminiGenerateContentClient:
         sleep: Sleep | None = None,
         event_sink: GeminiEventSink | None = None,
     ) -> None:
+        """Bind validated settings, an injectable transport and bounded retry policy."""
         if not isinstance(settings, GeminiSettings):
             raise TypeError("'settings' must be GeminiSettings.")
         self.settings = settings
@@ -264,20 +277,24 @@ class GeminiGenerateContentClient:
 
     @property
     def provider_name(self) -> str:
+        """Return the stable provider identifier used by the host UI and logs."""
         return "gemini"
 
     @property
     def model_name(self) -> str:
+        """Return the configured Gemini model name without its credential-bearing URL."""
         return self.settings.model
 
     @property
     def max_tool_rounds(self) -> int:
+        """Return the configured upper bound for one orchestrated tool loop."""
         return self.settings.max_tool_rounds
 
     def prepare_tools(
         self,
         tools: Iterable[RegisteredTool],
     ) -> list[dict[str, JsonValue]]:
+        """Transform tools into its safe canonical form."""
         return tools_for_gemini(tools)
 
     def create_message(
@@ -287,6 +304,7 @@ class GeminiGenerateContentClient:
         tools: list[dict[str, JsonValue]] | None = None,
         system: str | None = None,
     ) -> GeminiMessage:
+        """Build message from validated inputs."""
         payload: dict[str, JsonValue] = {
             "contents": messages_for_gemini(messages),
             "generationConfig": {
@@ -365,6 +383,7 @@ class GeminiGenerateContentClient:
         return message
 
     def _request_with_retries(self, request: HTTPRequest) -> HTTPResponse:
+        """Retry only classified transient failures using bounded server/backoff delays."""
         attempts = self.settings.max_retries + 1
         for attempt in range(1, attempts + 1):
             self._event(
@@ -428,6 +447,7 @@ class GeminiGenerateContentClient:
         raise GeminiAPIError("Gemini request failed after retries.")
 
     def _call_transport(self, request: HTTPRequest) -> HTTPResponse:
+        """Invoke the injected HTTPS transport and normalize local network exceptions."""
         try:
             return self._transport(request)
         except GeminiAPIError:
@@ -447,6 +467,7 @@ class GeminiGenerateContentClient:
         *,
         request_id: str | None,
     ) -> GeminiMessage:
+        """Parse message into the module's validated representation."""
         if not isinstance(value, dict):
             raise GeminiAPIError(
                 "Gemini returned a malformed response.", request_id=request_id
@@ -513,6 +534,9 @@ class GeminiGenerateContentClient:
                 "Gemini returned empty candidate content.", request_id=request_id
             )
 
+        # Reserve every provider-supplied ID before generating fallbacks.  Without
+        # this first pass an early id-less call could be assigned an identifier
+        # that collides with a later explicit Gemini function-call ID.
         explicit_ids: set[str] = set()
         for part in parts:
             if not isinstance(part, dict):
@@ -571,6 +595,9 @@ class GeminiGenerateContentClient:
                     "input": deepcopy(arguments),
                 }
                 if "thoughtSignature" in part:
+                    # Gemini requires this opaque signature on the matching future
+                    # function-call turn.  It stays in private provider metadata and
+                    # is never rendered as assistant text or sent to another provider.
                     signature = part["thoughtSignature"]
                     if not isinstance(signature, str) or not signature:
                         raise GeminiAPIError(
@@ -629,6 +656,7 @@ class GeminiGenerateContentClient:
         )
 
     def _new_call_id(self, reserved: set[str]) -> str:
+        """Build call id from validated inputs."""
         while True:
             identifier = f"gemini-call-{self._next_call_id:06d}"
             self._next_call_id += 1
@@ -636,6 +664,7 @@ class GeminiGenerateContentClient:
                 return identifier
 
     def _event(self, event_type: str, payload: dict[str, JsonValue]) -> None:
+        """Emit one provider event through the optional redacting protocol logger."""
         if self._event_sink is not None:
             self._event_sink(event_type, payload)
 
@@ -687,6 +716,9 @@ def messages_for_gemini(
     """Convert normalized history and correlate function response names."""
 
     converted: list[dict[str, JsonValue]] = []
+    # Gemini function responses require both the original call ID and function
+    # name.  Keep the mapping while walking chronological history so an orphaned
+    # or reordered result is rejected rather than guessed.
     tool_names: dict[str, str] = {}
     for message in messages:
         if not isinstance(message, dict) or message.get("role") not in {
@@ -738,6 +770,8 @@ def messages_for_gemini(
                 }
                 metadata = block.get(PROVIDER_METADATA_FIELD)
                 if metadata is not None:
+                    # Only Gemini's own converter may restore this private field;
+                    # provider-neutral history deliberately treats it as opaque.
                     if not isinstance(metadata, dict):
                         raise GeminiAPIError(
                             "The conversation contains invalid provider metadata."
@@ -787,6 +821,7 @@ def messages_for_gemini(
 
 
 def _validate_http_response(response: object) -> None:
+    """Validate http response and raise a controlled error on violation."""
     if (
         not isinstance(response, HTTPResponse)
         or isinstance(response.status, bool)
@@ -801,6 +836,7 @@ def _validate_http_response(response: object) -> None:
 
 
 def _decode_json(body: bytes, *, request_id: str | None) -> JsonValue:
+    """Parse json into the module's validated representation."""
     try:
         return json.loads(body.decode("utf-8"), parse_constant=_reject_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -810,6 +846,7 @@ def _decode_json(body: bytes, *, request_id: str | None) -> JsonValue:
 
 
 def _http_error(status: int, *, request_id: str | None) -> GeminiAPIError:
+    """Map an HTTP status to a sanitized provider error and retry classification."""
     labels = {
         400: "Gemini rejected the request.",
         401: "Gemini authentication failed.",
@@ -830,6 +867,7 @@ def _http_error(status: int, *, request_id: str | None) -> GeminiAPIError:
 
 
 def _request_id(headers: Mapping[str, str]) -> str | None:
+    """Extract and sanitize the first recognized provider request identifier."""
     for wanted in ("x-goog-request-id", "x-request-id", "request-id"):
         for key, value in headers.items():
             if key.casefold() == wanted and isinstance(value, str):
@@ -838,6 +876,7 @@ def _request_id(headers: Mapping[str, str]) -> str | None:
 
 
 def _safe_request_id(value: str) -> str | None:
+    """Accept a short visible identifier and discard unsafe diagnostic text."""
     candidate = value.strip()
     if re.fullmatch(r"[A-Za-z0-9._:-]{1,200}", candidate):
         return candidate
@@ -845,6 +884,7 @@ def _safe_request_id(value: str) -> str | None:
 
 
 def _normalize_model(value: object) -> str:
+    """Transform model into its safe canonical form."""
     if not isinstance(value, str) or not value.strip():
         raise GeminiConfigurationError("GEMINI_MODEL must be a model identifier.")
     candidate = value.strip()
@@ -862,6 +902,7 @@ def _normalize_model(value: object) -> str:
 
 
 def _validate_base_url(value: object) -> str:
+    """Validate base url and raise a controlled error on violation."""
     if not isinstance(value, str) or not value.strip() or len(value) > 2_048:
         raise GeminiConfigurationError(
             "GEMINI_BASE_URL must be a non-empty URL."
@@ -892,6 +933,7 @@ def _validate_base_url(value: object) -> str:
 def _environment_integer(
     environ: Mapping[str, str], name: str, default: int
 ) -> int:
+    """Read one bounded integer setting without inspecting unrelated variables."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -904,6 +946,7 @@ def _environment_integer(
 def _environment_float(
     environ: Mapping[str, str], name: str, default: float
 ) -> float:
+    """Read one bounded finite floating-point setting or use its default."""
     raw = environ.get(name)
     if raw is None:
         return default
@@ -914,6 +957,7 @@ def _environment_float(
 
 
 def _validate_integer(value: object, name: str, minimum: int, maximum: int) -> None:
+    """Validate integer and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
@@ -928,6 +972,7 @@ def _validate_integer(value: object, name: str, minimum: int, maximum: int) -> N
 def _validate_number(
     value: object, name: str, minimum: float, maximum: float
 ) -> None:
+    """Validate number and raise a controlled error on violation."""
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -941,6 +986,7 @@ def _validate_number(
 
 
 def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
+    """Read at most ``maximum`` response bytes and signal whether more data existed."""
     body = stream.read(maximum + 1)
     if not isinstance(body, bytes):
         raise GeminiAPIError("Gemini returned a non-binary HTTP body.")
@@ -948,6 +994,7 @@ def _bounded_read(stream: object, maximum: int) -> tuple[bytes, bool]:
 
 
 def _retry_delay(headers: Mapping[str, str], attempt: int) -> float:
+    """Prefer a bounded Retry-After value, otherwise use deterministic backoff."""
     for key, value in headers.items():
         if key.casefold() != "retry-after" or not isinstance(value, str):
             continue
@@ -967,13 +1014,16 @@ def _retry_delay(headers: Mapping[str, str], attempt: int) -> float:
 
 
 def _backoff_delay(attempt: int) -> float:
+    """Calculate the capped exponential delay for a zero-based retry attempt."""
     return min(float(2 ** (attempt - 1)), 8.0)
 
 
 def _is_transient_exception(error: GeminiAPIError) -> bool:
+    """Return whether the classified error permits a safe idempotent retry."""
     text = str(error)
     return "timed out" in text or "connect" in text
 
 
 def _reject_constant(value: str) -> None:
+    """Validate constant and raise a controlled error on violation."""
     raise ValueError(f"Invalid JSON constant: {value}")

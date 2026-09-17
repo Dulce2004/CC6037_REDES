@@ -1,3 +1,4 @@
+/* Design tokens: calm clinical palette with readable semantic state colors. */
 :root {
   color: #172626;
   background: #f3f7f5;
@@ -19,6 +20,7 @@
   --shadow: 0 20px 55px rgba(35, 75, 67, 0.09);
 }
 
+/* Layout baseline */
 * { box-sizing: border-box; }
 
 body {
@@ -34,6 +36,10 @@ body {
 button,
 textarea { font: inherit; }
 
+/* Accessibility and focus
+ * The ring token maintains at least 3:1 contrast against every control surface.
+ * Native keyboard focus remains visible without adding a persistent mouse outline.
+ */
 button:focus-visible,
 textarea:focus-visible,
 .skip-link:focus {
@@ -54,6 +60,7 @@ textarea:focus-visible,
 
 .skip-link:focus { top: 1rem; }
 
+/* Page header and responsive workspace shell */
 .page-shell {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
@@ -152,6 +159,7 @@ h3 { font-size: .92rem; }
   backdrop-filter: blur(12px);
 }
 
+/* System status components use compact hierarchy without competing with chat. */
 .status-panel {
   padding: 1.55rem;
   background: linear-gradient(170deg, #edf5f1, #f7faf8);
@@ -241,6 +249,7 @@ h3 { font-size: .92rem; }
 
 .privacy-note span { color: var(--green); }
 
+/* Conversation layout keeps status, messages, composer and warning distinct. */
 .chat-panel {
   display: grid;
   grid-template-rows: auto minmax(14rem, 1fr) auto auto auto;
@@ -288,6 +297,7 @@ h3 { font-size: .92rem; }
   font-size: 1.3rem;
 }
 
+/* Message roles use shape, alignment and labels in addition to color. */
 .message {
   width: fit-content;
   max-width: min(79%, 43rem);
@@ -335,6 +345,7 @@ h3 { font-size: .92rem; }
   border-color: #efc4c1;
 }
 
+/* Loading state remains legible when animation is disabled by user preference. */
 .processing {
   display: flex;
   gap: .55rem;
@@ -363,6 +374,7 @@ h3 { font-size: .92rem; }
   .message-list { scroll-behavior: auto; }
 }
 
+/* Form controls and actions preserve large touch targets and visible help text. */
 .composer {
   padding: .85rem 1.5rem .7rem;
   border-top: 1px solid var(--line);
@@ -427,6 +439,7 @@ textarea::placeholder { color: #889792; }
 .button-danger { color: white; background: var(--red); }
 .button-danger:hover:not(:disabled) { background: #852e2e; }
 
+/* The academic warning is visually persistent on desktop and mobile. */
 .medical-warning {
   padding: .65rem 1.5rem;
   color: #72511d;
@@ -436,6 +449,7 @@ textarea::placeholder { color: #889792; }
   line-height: 1.5;
 }
 
+/* Confirmation dialog separates mutable effects from ordinary conversation. */
 dialog {
   width: min(36rem, calc(100% - 2rem));
   padding: 0;
@@ -494,6 +508,7 @@ dialog::backdrop { background: rgba(21, 40, 37, .58); backdrop-filter: blur(3px)
   margin-top: 1.2rem;
 }
 
+/* Responsive layout: status compresses first; conversation retains full width. */
 @media (max-width: 760px) {
   .page-shell { width: 100%; padding: .75rem; }
   .topbar { padding: .35rem .25rem 1rem; }
@@ -507,6 +522,7 @@ dialog::backdrop { background: rgba(21, 40, 37, .58); backdrop-filter: blur(3px)
   .message { max-width: 91%; }
 }
 
+/* Small screens stack controls and confirmation actions into touch-safe rows. */
 @media (max-width: 480px) {
   .brand-mark { width: 2.55rem; height: 2.55rem; }
   .connection-pill { padding: .4rem .55rem; font-size: .7rem; }

@@ -1,4 +1,9 @@
-"""Clasificador determinista para el caso de uso educativo de farmacia."""
+"""Clasificador determinista interno para síntomas controlados.
+
+Valida identificadores de síntomas y aplica reglas transparentes conservadas para
+compatibilidad del dominio. Ya no constituye una tool MCP pública y no acepta texto
+médico libre. Su resultado es reproducible y la función no mantiene estado ni produce
+E/S."""
 
 from __future__ import annotations
 
@@ -60,6 +65,7 @@ def classify_symptoms(symptoms: object) -> dict[str, object]:
 
 
 def _normalize_symptoms(symptoms: object) -> list[str]:
+    """Transform symptoms into its safe canonical form."""
     if not isinstance(symptoms, list):
         raise SymptomValidationError("'symptoms' must be an array.")
     if not symptoms:
@@ -88,6 +94,7 @@ def _normalize_symptoms(symptoms: object) -> list[str]:
 
 
 def _unclassified_result(message: str | None = None) -> dict[str, object]:
+    """Create the bounded fallback category without presenting it as a diagnosis."""
     return {
         "status": "unclassified",
         "category": None,

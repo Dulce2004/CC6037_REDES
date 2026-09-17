@@ -65,7 +65,9 @@ MINIMUM_GIT_TOOLS = {
     "git, uvx, and npx are required for the real combined MCP test",
 )
 class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
+    """Group regression checks for official filesystem git integration behavior and boundaries."""
     def test_real_three_server_filesystem_to_git_workflow_is_isolated(self) -> None:
+        """Regression check: real three server filesystem to git workflow is isolated."""
         main_head_before = self.git_output(PROJECT_DIRECTORY, "rev-parse", "HEAD")
         main_status_before = self.git_output(
             PROJECT_DIRECTORY,
@@ -326,6 +328,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def filesystem_config(root: Path) -> StdioServerConfig:
+        """Support the controlled test scenario for filesystem config."""
         if os.name == "nt":
             command = os.environ.get("COMSPEC", "cmd.exe")
             args = ("/d", "/s", "/c", "npx", "-y", FILESYSTEM_PACKAGE, str(root))
@@ -360,6 +363,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def git_config(repository: Path) -> StdioServerConfig:
+        """Support the controlled test scenario for git config."""
         return StdioServerConfig(
             name="git",
             command="uvx",
@@ -391,6 +395,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def pharmacy_config(database_path: Path) -> StdioServerConfig:
+        """Support the controlled test scenario for pharmacy config."""
         return StdioServerConfig(
             name="pharmacy",
             command=sys.executable,
@@ -409,6 +414,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def git(repository: Path, *arguments: str) -> None:
+        """Support the controlled test scenario for git."""
         subprocess.run(
             ["git", "-C", str(repository), *arguments],
             check=True,
@@ -419,6 +425,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def git_output(repository: Path, *arguments: str) -> str:
+        """Support the controlled test scenario for git output."""
         result = subprocess.run(
             ["git", "-C", str(repository), *arguments],
             check=True,
@@ -430,6 +437,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
     @staticmethod
     def result_text(result: object) -> str:
+        """Support the controlled test scenario for result text."""
         if not isinstance(result, dict):
             raise AssertionError("MCP result is not an object")
         content = result.get("content")
@@ -444,16 +452,19 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
         )
 
     def assert_text_result(self, result: object, expected: str) -> None:
+        """Apply the shared assertion for text result."""
         self.assertIn(expected.casefold(), self.result_text(result).casefold())
 
     @staticmethod
     def read_entries(log_path: Path) -> list[dict[str, object]]:
+        """Support the controlled test scenario for read entries."""
         return [
             json.loads(line)
             for line in log_path.read_text(encoding="utf-8").splitlines()
         ]
 
     def outbound_tool_calls(self, log_path: Path, server: str) -> int:
+        """Support the controlled test scenario for outbound tool calls."""
         return sum(
             entry["server"] == server
             and entry["direction"] == "outbound"
@@ -464,6 +475,7 @@ class OfficialFilesystemGitIntegrationTests(unittest.TestCase):
 
 @contextmanager
 def generated_runtime_directory() -> Iterator[Path]:
+    """Support the controlled test scenario for generated runtime directory."""
     RUNTIME_DIRECTORY.mkdir(exist_ok=True)
     path = RUNTIME_DIRECTORY / f"filesystem-git-integration-{uuid4().hex}"
     path.mkdir()
@@ -477,6 +489,7 @@ def generated_runtime_directory() -> Iterator[Path]:
 
 
 def _remove_readonly(function: object, path: str, exception: BaseException) -> None:
+    """Support the controlled test scenario for remove readonly."""
     if not isinstance(exception, PermissionError) or not callable(function):
         raise exception
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)

@@ -1,4 +1,10 @@
-"""Almacén SQLite transaccional para inventario y órdenes simuladas."""
+"""Almacén SQLite transaccional para inventario y órdenes simuladas.
+
+Una conexión por operación y transacciones ``IMMEDIATE`` protegen descuentos atómicos
+y evitan sobreventa concurrente; cualquier fallo revierte la orden completa. El
+catálogo persistido debe coincidir con los datos validados y una base existente no se
+re-siembra. Inicializar, consultar y crear órdenes son efectos explícitos sobre la ruta
+SQLite configurada, cuyo lifecycle termina con ``close``."""
 
 from __future__ import annotations
 
@@ -52,6 +58,7 @@ class SQLitePharmacyStore:
     """
 
     def __init__(self, *, database_path: str | Path, catalog: PharmacyCatalog) -> None:
+        """Validate the catalog and remember a file or temporary SQLite target."""
         if not isinstance(catalog, PharmacyCatalog):
             raise TypeError("'catalog' must be a PharmacyCatalog instance.")
         raw_path = str(database_path)
@@ -73,6 +80,7 @@ class SQLitePharmacyStore:
 
     @property
     def database_path(self) -> Path | None:
+        """Return the resolved on-disk database path, or ``None`` for temporary storage."""
         return self._database_path
 
     def initialize(self, initial_inventory: InventoryRepository) -> None:
@@ -89,6 +97,9 @@ class SQLitePharmacyStore:
         try:
             connection.execute("PRAGMA journal_mode = WAL")
             self._create_schema(connection)
+            # ``BEGIN IMMEDIATE`` acquires the write reservation before checking
+            # seed metadata, preventing two initializers from observing an empty
+            # database and inserting the catalog twice.
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version_row = connection.execute(
@@ -132,6 +143,7 @@ class SQLitePharmacyStore:
         self._initialized = False
 
     def get_stock(self, branch_id: str, sku: str) -> int:
+        """Return stock while preserving stable ordering and ownership."""
         self._validate_branch(branch_id)
         self._validate_sku(sku)
         with closing(self._connect()) as connection:
@@ -150,6 +162,7 @@ class SQLitePharmacyStore:
         return int(row["quantity"])
 
     def list_stock(self, branch_id: str) -> tuple[InventoryRecord, ...]:
+        """Return stock while preserving stable ordering and ownership."""
         self._validate_branch(branch_id)
         with closing(self._connect()) as connection:
             quantities = {
@@ -176,6 +189,7 @@ class SQLitePharmacyStore:
     def get_stock_across_branches(
         self, sku: str
     ) -> tuple[InventoryRecord, ...]:
+        """Return stock across branches while preserving stable ordering and ownership."""
         self._validate_sku(sku)
         with closing(self._connect()) as connection:
             quantities = {
@@ -200,6 +214,7 @@ class SQLitePharmacyStore:
         )
 
     def list_records(self) -> tuple[InventoryRecord, ...]:
+        """Return records while preserving stable ordering and ownership."""
         return tuple(
             record
             for branch in self._catalog.list_branches()
@@ -243,6 +258,9 @@ class SQLitePharmacyStore:
         ).replace("+00:00", "Z")
 
         with closing(self._connect()) as connection:
+            # Hold one SQLite write transaction across validation, stock updates and
+            # order inserts.  Any exception reaches the rollback below, so callers
+            # never observe a partially reserved multi-item order.
             connection.execute("BEGIN IMMEDIATE")
             try:
                 for item in item_list:
@@ -290,6 +308,9 @@ class SQLitePharmacyStore:
                 for position, (item, medication) in enumerate(
                     zip(item_list, medications, strict=True)
                 ):
+                    # Recheck quantity in the UPDATE predicate.  The transaction
+                    # already serializes writers, while this guard also protects
+                    # against stale assumptions if the query/update sequence changes.
                     updated = connection.execute(
                         """
                         UPDATE inventory
@@ -330,6 +351,7 @@ class SQLitePharmacyStore:
         return self.get_order(order_id)
 
     def get_order(self, order_id: str) -> OrderRecord:
+        """Return order while preserving stable ordering and ownership."""
         with closing(self._connect()) as connection:
             order_row = connection.execute(
                 """
@@ -370,6 +392,7 @@ class SQLitePharmacyStore:
         )
 
     def _connect(self, *, require_initialized: bool = True) -> sqlite3.Connection:
+        """Open a constraint-enforcing connection to the initialized store target."""
         if require_initialized and not self._initialized:
             raise StoreInitializationError(
                 "The pharmacy database must be initialized before use."
@@ -387,6 +410,7 @@ class SQLitePharmacyStore:
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
+        """Build schema from validated inputs."""
         statements = (
             """
             CREATE TABLE IF NOT EXISTS metadata (
@@ -448,6 +472,7 @@ class SQLitePharmacyStore:
 
     @staticmethod
     def _ensure_unseeded_tables_are_empty(connection: sqlite3.Connection) -> None:
+        """Reject partial preexisting state before the one-time catalog seed."""
         for table in ("branches", "medications", "inventory", "orders"):
             count = connection.execute(
                 f"SELECT COUNT(*) AS count FROM {table}"
@@ -462,6 +487,7 @@ class SQLitePharmacyStore:
         connection: sqlite3.Connection,
         initial_inventory: InventoryRepository,
     ) -> None:
+        """Insert the validated catalog and inventory atomically into an empty schema."""
         connection.executemany(
             "INSERT INTO branches (branch_id, name) VALUES (?, ?)",
             (
@@ -500,6 +526,7 @@ class SQLitePharmacyStore:
         )
 
     def _validate_persisted_catalog(self, connection: sqlite3.Connection) -> None:
+        """Validate persisted catalog and raise a controlled error on violation."""
         persisted_branches = {
             (row["branch_id"], row["name"])
             for row in connection.execute("SELECT branch_id, name FROM branches")
@@ -548,19 +575,23 @@ class SQLitePharmacyStore:
             )
 
     def _validate_branch(self, branch_id: str) -> None:
+        """Validate branch and raise a controlled error on violation."""
         if self._catalog.get_branch(branch_id) is None:
             raise InventoryLookupError(f"Unknown branch: '{branch_id}'.")
 
     def _validate_sku(self, sku: str) -> None:
+        """Validate sku and raise a controlled error on violation."""
         if self._catalog.get_medication(sku) is None:
             raise InventoryLookupError(f"Unknown medication SKU: '{sku}'.")
 
     def _validate_branch_for_order(self, branch_id: str) -> None:
+        """Validate branch for order and raise a controlled error on violation."""
         if self._catalog.get_branch(branch_id) is None:
             raise OrderExecutionError(f"Unknown branch: '{branch_id}'.")
 
     @staticmethod
     def _validate_order_items(items: tuple[OrderItemRequest, ...]) -> None:
+        """Validate order items and raise a controlled error on violation."""
         if not items:
             raise OrderValidationError("An order must contain at least one item.")
         if not all(isinstance(item, OrderItemRequest) for item in items):
@@ -573,6 +604,7 @@ class SQLitePharmacyStore:
 
     @staticmethod
     def _validate_prescription_id(prescription_id: str | None) -> str | None:
+        """Validate prescription id and raise a controlled error on violation."""
         if prescription_id is None:
             return None
         if (
@@ -592,6 +624,7 @@ class SQLitePharmacyStore:
         branch_id: str,
         sku: str,
     ) -> int:
+        """Validate quantity and raise a controlled error on violation."""
         try:
             return quantities[key]
         except KeyError as exc:
