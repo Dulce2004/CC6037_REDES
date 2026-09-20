@@ -1,1 +1,8 @@
-# Esta etapa utiliza únicamente la biblioteca estándar de Python.
+# Dependencias de Python para PharmaMCP
+#
+# El proyecto requiere Python 3.12 o superior y utiliza exclusivamente la
+# biblioteca estándar. 
+#
+# Las integraciones externas se ejecutan por separado y no pertenecen a este
+# archivo: mcp-server-git se obtiene mediante uvx y Filesystem MCP mediante
+# npx. Los clientes de Gemini y Anthropic usan urllib de la biblioteca estándar.
